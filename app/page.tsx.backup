@@ -1,0 +1,220 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Header from "@/components/Header";
+import Filters from "@/components/Filters";
+import PollutantSelector from "@/components/PollutantSelector";
+import CityMap from "@/components/CityMap";
+import TimeSeriesChart from "@/components/TimeSeriesChart";
+import ExposureScore from "@/components/ExposureScore";
+import CompareCities from "@/components/CompareCities";
+import WhyThisMatters from "@/components/WhyThisMatters";
+import WhoControlsTheRail from "@/components/WhoControlsTheRail";
+import DownloadSampleData from "@/components/DownloadSampleData";
+import { getCity } from "@/lib/cities";
+import { ExposureScoreResult, MeasurementPoint, PollutantCode, StationLocation } from "@/lib/types";
+
+type ApiError = { error: string; code?: string };
+function isError<T>(v: T | ApiError): v is ApiError {
+  return typeof v === "object" && v !== null && "error" in v;
+}
+
+export default function Page() {
+  const [cityId, setCityId] = useState("delhi");
+  const [parameter, setParameter] = useState<PollutantCode>("pm25");
+  const [daysBack, setDaysBack] = useState(7);
+
+  const [stations, setStations] = useState<StationLocation[]>([]);
+  const [stationsLoading, setStationsLoading] = useState(true);
+  const [stationsError, setStationsError] = useState<string | null>(null);
+  const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
+
+  const [points, setPoints] = useState<MeasurementPoint[]>([]);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+
+  const [exposure, setExposure] = useState<ExposureScoreResult | null>(null);
+  const [exposureLoading, setExposureLoading] = useState(true);
+
+  const city = getCity(cityId)!;
+
+  async function findStationWithData(candidateStations: StationLocation[]) {
+    // The OpenAQ location list is not ordered by freshness. Prioritize
+    // stations that advertise the selected pollutant, then use their latest
+    // update timestamp so cities such as London do not get stuck probing a
+    // handful of stale or irrelevant stations first.
+    const matchingParameter = candidateStations.filter((station) => station.parameters.includes(parameter));
+    const candidates = (matchingParameter.length > 0 ? matchingParameter : candidateStations)
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.lastUpdated ?? 0).getTime() - new Date(a.lastUpdated ?? 0).getTime()
+      )
+      .slice(0, 8);
+    for (const station of candidates) {
+      try {
+        const res = await fetch(`/api/openaq/measurements?locationId=${station.id}&parameter=${parameter}&daysBack=${daysBack}`);
+        const data = (await res.json()) as { points?: MeasurementPoint[] } | ApiError;
+        if (!isError(data) && (data.points?.length ?? 0) > 0) {
+          return { stationId: station.id, points: data.points ?? [] };
+        }
+      } catch {
+        // keep trying the next candidate
+      }
+    }
+    return null;
+  }
+
+  // Load stations whenever the city changes.
+  useEffect(() => {
+    let cancelled = false;
+    setStationsLoading(true);
+    setStationsError(null);
+    setSelectedStationId(null);
+    setPoints([]);
+
+    fetch(`/api/openaq/locations?city=${cityId}`)
+      .then((r) => r.json())
+      .then((data: { stations: StationLocation[] } | ApiError) => {
+        if (cancelled) return;
+        if (isError(data)) {
+          setStationsError(data.error);
+          setStations([]);
+        } else {
+          setStations(data.stations);
+          // Prefer a station that actually has measurements for the selected
+          // pollutant/window. If no station responds with data, fall back to
+          // the first station so the user can still inspect the network.
+          findStationWithData(data.stations).then((match) => {
+            if (cancelled) return;
+            if (match) {
+              setSelectedStationId(match.stationId);
+              setPoints(match.points);
+            } else if (data.stations.length > 0) {
+              setSelectedStationId(data.stations[0].id);
+            }
+          });
+        }
+      })
+      .catch(() => !cancelled && setStationsError("Network error reaching the OpenAQ rail."))
+      .finally(() => !cancelled && setStationsLoading(false));
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cityId, parameter, city.lat, city.lon]);
+
+  // Load time series whenever the selected station, pollutant, or window changes.
+  useEffect(() => {
+    if (!selectedStationId) {
+      setPoints([]);
+      return;
+    }
+    let cancelled = false;
+    setSeriesLoading(true);
+    fetch(`/api/openaq/measurements?locationId=${selectedStationId}&parameter=${parameter}&daysBack=${daysBack}`)
+      .then((r) => r.json())
+      .then((data: { points: MeasurementPoint[] } | ApiError) => {
+        if (cancelled) return;
+        const pts = isError(data) ? [] : data.points;
+        setPoints(pts);
+      })
+      .catch(() => !cancelled && setPoints([]))
+      .finally(() => !cancelled && setSeriesLoading(false));
+    return () => {
+      cancelled = true;
+    };
+    // include stations because the selected station may be updated from the probe
+  }, [selectedStationId, parameter, daysBack, stations, city.id, city.lat, city.lon]);
+
+  // Load exposure score whenever city or pollutant changes.
+  useEffect(() => {
+    let cancelled = false;
+    setExposureLoading(true);
+    fetch(`/api/exposure?city=${cityId}&parameter=${parameter}`)
+      .then((r) => r.json())
+      .then((data: ExposureScoreResult | ApiError) => {
+        if (cancelled) return;
+        setExposure(isError(data) ? null : data);
+      })
+      .catch(() => !cancelled && setExposure(null))
+      .finally(() => !cancelled && setExposureLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [cityId, parameter]);
+
+  const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null;
+
+  return (
+    <div className="min-h-screen">
+      <Header />
+
+      <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
+        {stationsError && (
+          <div className="rounded-lg border border-signal-alert/40 bg-signal-alert/10 p-4 text-sm text-signal-alert">
+            <p className="font-mono text-xs uppercase tracking-wider">Live data unavailable</p>
+            <p className="mt-1 text-text-primary">{stationsError}</p>
+            <p className="mt-1 text-text-muted">
+              This usually means <code className="font-mono">OPENAQ_API_KEY</code> isn't set. Copy{" "}
+              <code className="font-mono">.env.example</code> to <code className="font-mono">.env.local</code> and add a free
+              key from openaq.org, then restart the dev server.
+            </p>
+          </div>
+        )}
+
+        <div className="rounded-lg border border-rail-line bg-rail-panel-raised p-5">
+          <div className="flex flex-wrap items-end justify-between gap-6">
+            <Filters city={cityId} onCityChange={setCityId} daysBack={daysBack} onDaysBackChange={setDaysBack} />
+
+            <PollutantSelector value={parameter} onChange={setParameter} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2 space-y-6">
+            <div>
+              <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-text-faint">
+                {city.name} monitoring network
+              </p>
+              <CityMap
+                city={city}
+                stations={stations}
+                selectedStationId={selectedStationId}
+                onSelectStation={setSelectedStationId}
+                loading={stationsLoading}
+              />
+            </div>
+
+            <div className="rounded-lg border border-rail-line bg-rail-panel p-5">
+              <TimeSeriesChart
+                points={points}
+                parameter={parameter}
+                loading={seriesLoading}
+                stationName={selectedStation?.name ?? null}
+              />
+              <div className="mt-4 flex justify-end">
+                <DownloadSampleData cityId={cityId} parameter={parameter} points={points} />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <ExposureScore result={exposure} loading={exposureLoading} />
+          </div>
+        </div>
+
+        <CompareCities parameter={parameter} />
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <WhyThisMatters />
+          <WhoControlsTheRail />
+        </div>
+
+        <footer className="border-t border-rail-line pt-6 font-mono text-[11px] text-text-faint">
+          Real Rails Intelligence Library · Data &amp; Intelligence rail · Sources: OpenAQ (CC BY 4.0), WorldPop
+        </footer>
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #0a0d10;
+  background-image:
+    radial-gradient(ellipse 900px 500px at 15% -10%, rgba(63, 224, 197, 0.06), transparent 60%),
+    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(245, 166, 35, 0.04), transparent 55%);
+  color: #e8edf0;
+}
+
+::selection {
+  background: #3fe0c5;
+  color: #0a0d10;
+}
+
+/* Thin, technical scrollbars to match the instrument-panel feel */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0a0d10; }
+::-webkit-scrollbar-thumb { background: #232b31; border-radius: 999px; border: 2px solid #0a0d10; }
+::-webkit-scrollbar-thumb:hover { background: #33414a; }
+
+.focus-ring:focus-visible {
+  outline: 2px solid #3fe0c5;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

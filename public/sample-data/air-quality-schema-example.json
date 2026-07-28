@@ -1,0 +1,11 @@
+{
+  "_note": "SCHEMA EXAMPLE — not live data. This file exists so the download button's format is documented even before you have an OPENAQ_API_KEY configured. The in-app 'Export current series' button downloads real, live OpenAQ measurements in this exact shape.",
+  "cityId": "delhi",
+  "parameter": "pm25",
+  "unit": "µg/m³",
+  "points": [
+    { "datetime": "2026-07-10T00:00:00Z", "value": 62.4, "unit": "µg/m³" },
+    { "datetime": "2026-07-10T01:00:00Z", "value": 58.1, "unit": "µg/m³" },
+    { "datetime": "2026-07-10T02:00:00Z", "value": 54.9, "unit": "µg/m³" }
+  ]
+}

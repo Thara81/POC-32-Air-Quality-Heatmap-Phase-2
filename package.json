@@ -1,0 +1,31 @@
+{
+  "name": "air-quality-heatmap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Air Quality Heatmap — Real Rails Intelligence Library / Data & Intelligence Rail",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "etl": "cd etl && uvicorn main:app --reload --port 8010"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-leaflet": "^4.2.1",
+    "recharts": "2.12.7"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.21",
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.19",
+    "postcss": "8.4.39",
+    "tailwindcss": "3.4.6",
+    "typescript": "5.5.4"
+  }
+}
