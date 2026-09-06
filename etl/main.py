@@ -32,6 +32,7 @@ import json
 import os
 import statistics
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -63,9 +64,7 @@ POLLUTANTS = list(WHO_GUIDELINE_UGM3.keys())
 # Anything not in this table is treated as untrustworthy and dropped rather
 # than silently mis-scaled — this is what the old code did wrong for CO.
 UNIT_TO_UGM3 = {
-    "µg/m³": 1.0,
     "ug/m3": 1.0,
-    "mg/m³": 1000.0,
     "mg/m3": 1000.0,
 }
 
@@ -73,13 +72,19 @@ UNIT_TO_UGM3 = {
 def _normalize_to_ugm3(value: float, unit: Optional[str]) -> Optional[float]:
     if value is None:
         return None
-    factor = UNIT_TO_UGM3.get((unit or "").strip())
+    normalized_unit = (unit or "").strip().lower().replace("μ", "u").replace("µ", "u").replace("³", "3")
+    factor = UNIT_TO_UGM3.get(normalized_unit)
     if factor is None:
         # e.g. "ppm"/"ppb" for gases need a species- and temperature-
         # dependent conversion we don't have inputs for here. Rather than
         # guess (which is exactly how the CO bug happened), drop the point.
         return None
     return value * factor
+
+
+def _log_openaq_error(response: httpx.Response, request_name: str) -> None:
+    body = response.text.replace("\n", " ").strip()[:300]
+    print(f"  OpenAQ {request_name} failed ({response.status_code}): {body}")
 
 
 def _reject_outliers(values: list[float]) -> list[float]:
@@ -104,20 +109,26 @@ async def fetch_city_mean_ugm3(
 
     headers = {"X-API-Key": api_key}
 
-    loc_res = await client.get(
-        f"{OPENAQ_BASE}/locations",
-        params={"bbox": ",".join(map(str, bbox)), "limit": 50},
-        headers=headers,
-    )
+    try:
+        loc_res = await client.get(
+            f"{OPENAQ_BASE}/locations",
+            params={"bbox": ",".join(map(str, bbox)), "limit": 50},
+            headers=headers,
+        )
+    except httpx.HTTPError as exc:
+        print(f"  OpenAQ locations request failed: {exc}")
+        return None, 0
     if loc_res.status_code != 200:
+        _log_openaq_error(loc_res, "locations request")
         return None, 0
 
     stations = loc_res.json().get("results", [])
     relevant = []
     for s in stations:
         for sensor in s.get("sensors", []):
-            if sensor.get("parameter", {}).get("name") == parameter:
-                relevant.append(s)
+            sensor_parameter = sensor.get("parameter", {})
+            if sensor_parameter.get("name") == parameter and isinstance(sensor.get("id"), int):
+                relevant.append((s, sensor))
                 break
 
     if not relevant:
@@ -126,13 +137,26 @@ async def fetch_city_mean_ugm3(
     relevant = relevant[:6]
     raw_values: list[float] = []
 
-    for station in relevant:
-        m_res = await client.get(
-            f"{OPENAQ_BASE}/locations/{station['id']}/measurements",
-            params={"parameters_id": parameter, "limit": 100, "sort": "desc"},
-            headers=headers,
-        )
+    date_to = datetime.now(timezone.utc)
+    date_from = date_to - timedelta(days=7)
+    for station, sensor in relevant:
+        # v3 measurements are addressed by sensor. The sensor metadata above
+        # resolves the pollutant name to its numeric OpenAQ parameter/sensor.
+        try:
+            m_res = await client.get(
+                f"{OPENAQ_BASE}/sensors/{sensor['id']}/measurements",
+                params={
+                    "datetime_from": date_from.isoformat(),
+                    "datetime_to": date_to.isoformat(),
+                    "limit": 100,
+                },
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            print(f"  OpenAQ sensor {sensor['id']} request failed: {exc}")
+            continue
         if m_res.status_code != 200:
+            _log_openaq_error(m_res, f"sensor {sensor['id']} measurements request")
             continue
         for m in m_res.json().get("results", []):
             value = m.get("value")
