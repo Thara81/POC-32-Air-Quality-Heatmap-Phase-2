@@ -1,0 +1,28 @@
+services:
+  nextjs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+      WORLDPOP_API_BASE: ${WORLDPOP_API_BASE:-https://api.worldpop.org/v1}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
+    environment:
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+      WORLDPOP_API_BASE: ${WORLDPOP_API_BASE:-https://api.worldpop.org/v1}
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

@@ -18,9 +18,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Air Quality Heatmap — Real Rails Intelligence Library",
+  title: "Infocreon Internship - Air Quality Intelligence Platform",
   description:
-    "A Data & Intelligence rail demo: live air quality exposure scoring built on OpenAQ and WorldPop.",
+    "A full-screen air quality intelligence platform built on OpenAQ and WorldPop.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

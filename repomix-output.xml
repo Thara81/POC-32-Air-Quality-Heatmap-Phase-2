@@ -89,6 +89,7 @@ lib/
   cache.ts
   cities.ts
   exposure.ts
+  mock-data.ts
   types.ts
 public/
   sample-data/
@@ -108,6 +109,72 @@ update_snapshot.py
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="lib/mock-data.ts">
+import { CityDef, MeasurementPoint, PollutantCode, StationLocation } from "./types";
+
+const BASE_VALUES: Record<PollutantCode, number> = {
+  pm25: 34,
+  pm10: 58,
+  no2: 27,
+  o3: 46,
+  so2: 11,
+  co: 720,
+};
+
+const CITY_FACTORS: Record<string, number> = {
+  delhi: 2.7,
+  "los-angeles": 1.25,
+  london: 0.8,
+  jakarta: 1.55,
+  lagos: 1.75,
+  warsaw: 1.05,
+  "sao-paulo": 1.2,
+  beijing: 2.15,
+};
+
+export function getMockStations(city: CityDef): StationLocation[] {
+  const offsets = [
+    [-0.06, 0.04],
+    [0.04, 0.03],
+    [-0.03, -0.05],
+    [0.07, -0.02],
+    [0, 0.07],
+  ];
+
+  return offsets.map(([lonOffset, latOffset], index) => ({
+    id: -(city.id.length * 100 + index + 1),
+    name: `${city.name} sample station ${index + 1}`,
+    lat: city.lat + latOffset,
+    lon: city.lon + lonOffset,
+    provider: "Local sample network",
+    parameters: ["pm25", "pm10", "no2", "o3", "so2", "co"],
+    lastUpdated: new Date(Date.now() - index * 45 * 60 * 1000).toISOString(),
+  }));
+}
+
+export function getMockMeasurements(
+  locationId: number,
+  parameter: PollutantCode,
+  daysBack: number
+): MeasurementPoint[] {
+  const factor = 1 + (Math.abs(locationId) % 5) * 0.06;
+  const cityFactor = Object.values(CITY_FACTORS)[Math.abs(locationId) % Object.values(CITY_FACTORS).length];
+  const pointCount = Math.max(12, Math.min(48, Math.round(daysBack * 6)));
+  const interval = (daysBack * 24 * 60 * 60 * 1000) / pointCount;
+  const now = Date.now();
+
+  return Array.from({ length: pointCount }, (_, index) => {
+    const wave = 1 + Math.sin(index / 2.3) * 0.14;
+    const value = BASE_VALUES[parameter] * cityFactor * factor * wave;
+    return {
+      datetime: new Date(now - (pointCount - index) * interval).toISOString(),
+      value: Number(value.toFixed(2)),
+      unit: "µg/m³",
+    };
+  });
+}
+</file>
 
 <file path="app/api/exposure/snapshot/route.ts">
 import { NextResponse } from "next/server";
@@ -175,6 +242,7 @@ export async function GET(req: NextRequest) {
 import { NextRequest, NextResponse } from "next/server";
 import { getCity } from "@/lib/cities";
 import { fetchStations, OpenAQConfigError, OpenAQUpstreamError } from "@/lib/adapters/openaq";
+import { getMockStations } from "@/lib/mock-data";
 
 export async function GET(req: NextRequest) {
   const cityId = req.nextUrl.searchParams.get("city");
@@ -185,13 +253,16 @@ export async function GET(req: NextRequest) {
 
   try {
     const stations = await fetchStations(city);
+    if (stations.length === 0) {
+      return NextResponse.json({ city: city.id, stations: getMockStations(city), source: "mock" });
+    }
     return NextResponse.json({ city: city.id, stations });
   } catch (err) {
     if (err instanceof OpenAQConfigError) {
-      return NextResponse.json({ error: err.message, code: "config" }, { status: 503 });
+      return NextResponse.json({ city: city.id, stations: getMockStations(city), source: "mock" });
     }
     if (err instanceof OpenAQUpstreamError) {
-      return NextResponse.json({ error: err.message, code: "upstream" }, { status: 502 });
+      return NextResponse.json({ city: city.id, stations: getMockStations(city), source: "mock" });
     }
     return NextResponse.json({ error: "Unexpected error fetching stations" }, { status: 500 });
   }
@@ -202,6 +273,7 @@ export async function GET(req: NextRequest) {
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMeasurements, OpenAQConfigError, OpenAQUpstreamError } from "@/lib/adapters/openaq";
 import { PollutantCode } from "@/lib/types";
+import { getMockMeasurements } from "@/lib/mock-data";
 
 export async function GET(req: NextRequest) {
   const locationId = Number(req.nextUrl.searchParams.get("locationId"));
@@ -214,13 +286,16 @@ export async function GET(req: NextRequest) {
 
   try {
     const points = await fetchMeasurements(locationId, parameter, daysBack);
+    if (points.length === 0) {
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
+    }
     return NextResponse.json({ locationId, parameter, points });
   } catch (err) {
     if (err instanceof OpenAQConfigError) {
-      return NextResponse.json({ error: err.message, code: "config" }, { status: 503 });
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
     }
     if (err instanceof OpenAQUpstreamError) {
-      return NextResponse.json({ error: err.message, code: "upstream" }, { status: 502 });
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
     }
     return NextResponse.json({ error: "Unexpected error fetching measurements" }, { status: 500 });
   }
@@ -254,27 +329,65 @@ export async function GET(req: NextRequest) {
 }
 
 body {
-  background-color: #0a0d10;
+  background-color: #07110f;
   background-image:
-    radial-gradient(ellipse 900px 500px at 15% -10%, rgba(63, 224, 197, 0.06), transparent 60%),
-    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(245, 166, 35, 0.04), transparent 55%);
+    linear-gradient(120deg, rgba(7, 17, 15, 0.98), rgba(5, 12, 14, 0.98)),
+    repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(103, 218, 190, 0.025) 40px),
+    repeating-linear-gradient(90deg, transparent 0, transparent 39px, rgba(103, 218, 190, 0.025) 40px);
   color: #e8edf0;
 }
 
 ::selection {
-  background: #3fe0c5;
-  color: #0a0d10;
+  background: #67dabe;
+  color: #07110f;
 }
 
 /* Thin, technical scrollbars to match the instrument-panel feel */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #0a0d10; }
-::-webkit-scrollbar-thumb { background: #232b31; border-radius: 999px; border: 2px solid #0a0d10; }
+::-webkit-scrollbar-track { background: #07110f; }
+::-webkit-scrollbar-thumb { background: #29443f; border-radius: 999px; border: 2px solid #07110f; }
 ::-webkit-scrollbar-thumb:hover { background: #33414a; }
 
 .focus-ring:focus-visible {
-  outline: 2px solid #3fe0c5;
+  outline: 2px solid #67dabe;
   outline-offset: 2px;
+}
+
+/* Keep Leaflet's station tooltips legible against the dark intelligence map. */
+.leaflet-tooltip {
+  background: #112522;
+  border: 1px solid #67dabe;
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  color: #e8edf0;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 8px 10px;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: #67dabe;
+}
+
+.openstreetmap-dark-tiles {
+  filter: invert(92%) hue-rotate(155deg) saturate(55%) brightness(62%) contrast(115%);
+}
+
+.leaflet-control-zoom {
+  margin-top: 178px !important;
+  margin-left: 12px !important;
+}
+
+@media (max-width: 640px) {
+  .leaflet-control-zoom {
+    margin-top: 228px !important;
+  }
+}
+
+@media (max-height: 520px) {
+  .signal-graph {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -308,9 +421,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Air Quality Heatmap — Real Rails Intelligence Library",
+  title: "Infocreon Internship - Air Quality Intelligence Platform",
   description:
-    "A Data & Intelligence rail demo: live air quality exposure scoring built on OpenAQ and WorldPop.",
+    "A full-screen air quality intelligence platform built on OpenAQ and WorldPop.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -330,9 +443,8 @@ import Header from "@/components/Header";
 import Filters from "@/components/Filters";
 import PollutantSelector from "@/components/PollutantSelector";
 import CityMap from "@/components/CityMap";
-import TimeSeriesChart from "@/components/TimeSeriesChart";
-import DownloadSampleData from "@/components/DownloadSampleData";
 import Sidebar from "@/components/Sidebar";
+import TimeSeriesChart from "@/components/TimeSeriesChart";
 import { getCity } from "@/lib/cities";
 import { ExposureScoreResult, MeasurementPoint, PollutantCode, StationLocation } from "@/lib/types";
 
@@ -364,11 +476,17 @@ async function findStationWithData(
         `/api/openaq/measurements?locationId=${station.id}&parameter=${parameter}&daysBack=${daysBack}`
       );
       const data = (await res.json()) as { points?: MeasurementPoint[] } | ApiError;
-      if (!isError(data) && (data.points?.length ?? 0) > 0) {
+
+      if (isError(data)) {
+        console.error(`station ${station.id} api error:`, data.error);
+        continue;
+      }
+
+      if ((data.points?.length ?? 0) > 0) {
         return { stationId: station.id, points: data.points ?? [] };
       }
-    } catch {
-      // Keep trying the next candidate
+    } catch (err) {
+      console.error(`station ${station.id} measurement fetch fail:`, err);
     }
   }
   return null;
@@ -389,6 +507,7 @@ export default function Page() {
 
   const [exposure, setExposure] = useState<ExposureScoreResult | null>(null);
   const [exposureLoading, setExposureLoading] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -399,7 +518,6 @@ export default function Page() {
     let cancelled = false;
     setExposureLoading(true);
 
-    // Use snapshot directly - it has all the ETL data
     fetch(`/api/exposure/snapshot`)
       .then((r) => r.json())
       .then((data: ExposureScoreResult[] | ApiError) => {
@@ -408,7 +526,6 @@ export default function Page() {
           setExposure(null);
           return;
         }
-        // Find the data for this city and parameter
         const cityData = data.find(
           (d) => d.cityId === cityId && d.parameter === parameter
         );
@@ -430,6 +547,7 @@ export default function Page() {
     setStationsLoading(true);
     setStationsError(null);
     setSelectedStationId(null);
+    setPanelOpen(false);
     setPoints([]);
 
     fetch(`/api/openaq/locations?city=${cityId}`)
@@ -519,21 +637,25 @@ export default function Page() {
   }, [selectedStationId, parameter, daysBack, stations]);
 
   const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null;
+  const selectStation = (id: number) => {
+    setSelectedStationId(id);
+    setPanelOpen(true);
+  };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="relative h-screen overflow-hidden bg-rail-void">
       <Header />
 
-      <main className="flex-1 flex flex-col min-h-0 mx-auto max-w-7xl w-full px-3 py-1.5">
+      <main className="relative h-full w-full">
         {stationsError && (
-          <div className="rounded-lg border border-signal-alert/40 bg-signal-alert/10 p-1.5 text-xs text-signal-alert mb-1.5 flex-shrink-0">
+          <div className="absolute left-4 top-24 z-[1050] rounded-lg border border-signal-alert/40 bg-rail-panel/95 p-2 text-xs text-signal-alert shadow-xl">
             <p className="font-mono text-[9px] uppercase tracking-wider">Live data unavailable</p>
             <p className="text-text-primary text-[10px]">{stationsError}</p>
           </div>
         )}
 
-        <div className="rounded-lg border border-rail-line bg-rail-panel-raised p-1.5 mb-1.5 flex-shrink-0">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="absolute left-4 right-4 top-[5.75rem] z-[1000] flex justify-between gap-3 pointer-events-none">
+          <div className="pointer-events-auto flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-3 rounded-lg border border-rail-line-bright bg-rail-panel/95 p-3 shadow-xl backdrop-blur-md">
             <Filters
               city={cityId}
               onCityChange={setCityId}
@@ -542,53 +664,54 @@ export default function Page() {
             />
             <PollutantSelector value={parameter} onChange={setParameter} />
           </div>
+          <div className="hidden self-start rounded-lg border border-rail-line bg-rail-panel/90 px-4 py-3 font-mono text-xs uppercase tracking-wider text-text-muted shadow-xl backdrop-blur-md sm:block">
+            Click a marker to inspect intelligence
+          </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-2 min-h-0">
-          <div className="lg:col-span-2 flex flex-col gap-2 min-h-0">
-            <div className="flex-shrink-0" style={{ height: '40%' }}>
-              <div className="flex items-center justify-between mb-0.5">
-                <p className="font-mono text-[9px] uppercase tracking-wider text-text-faint">
-                  {city.name} · {stations.length} stations
-                </p>
-                <span className="font-mono text-[9px] text-text-faint">
-                  {parameter.toUpperCase()}
-                </span>
-              </div>
-              <CityMap
-                city={city}
-                stations={stations}
-                selectedStationId={selectedStationId}
-                onSelectStation={setSelectedStationId}
-                loading={stationsLoading}
-              />
-            </div>
+        <div className="absolute inset-0 p-2 pt-2">
+          <CityMap
+            city={city}
+            stations={stations}
+            selectedStationId={selectedStationId}
+            onSelectStation={selectStation}
+            loading={stationsLoading}
+          />
+        </div>
 
-            <div className="flex-1 min-h-0 rounded-lg border border-rail-line bg-rail-panel p-1.5 flex flex-col">
-              <TimeSeriesChart
-                points={points}
-                parameter={parameter}
-                loading={seriesLoading}
-                stationName={selectedStation?.name ?? null}
-              />
-              <div className="mt-0.5 flex justify-end flex-shrink-0">
-                <DownloadSampleData cityId={cityId} parameter={parameter} points={points} />
-              </div>
+        <aside className={`absolute right-2 top-20 bottom-2 z-[1050] w-[min(500px,calc(100%-1rem))] overflow-hidden rounded-lg border border-rail-line-bright bg-rail-void/95 shadow-2xl shadow-black/50 backdrop-blur-xl transition-transform duration-300 ease-out ${panelOpen ? "translate-x-0" : "translate-x-[calc(100%+1rem)]"}`}>
+          <Sidebar
+            exposure={exposure}
+            exposureLoading={exposureLoading}
+            parameter={parameter}
+            station={selectedStation}
+            points={points}
+            cityName={city.name}
+            cityId={cityId}
+            onClose={() => setPanelOpen(false)}
+          />
+        </aside>
+
+        <div className="signal-graph absolute bottom-10 left-4 z-[1000] h-56 w-[min(560px,calc(100%-2rem))] rounded-xl border border-rail-line-bright bg-rail-panel/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-signal-clear">Live signal graph</p>
+              <p className="mt-0.5 text-sm font-medium text-text-primary">{selectedStation?.name ?? "Waiting for station data"}</p>
             </div>
+            <span className="rounded border border-rail-line px-2 py-1 font-mono text-[10px] text-text-muted">{daysBack} DAY WINDOW</span>
           </div>
-
-          <div className="lg:col-span-1 min-h-0">
-            <Sidebar
-              exposure={exposure}
-              exposureLoading={exposureLoading}
+          <div className="h-[calc(100%-3.25rem)]">
+            <TimeSeriesChart
+              points={points}
               parameter={parameter}
+              loading={seriesLoading || stationsLoading}
+              stationName={null}
             />
           </div>
         </div>
 
-        <footer className="mt-0.5 border-t border-rail-line pt-0.5 font-mono text-[8px] text-text-faint flex flex-wrap justify-between items-center flex-shrink-0">
-          <span>Real Rails Intelligence Library · Data &amp; Intelligence rail</span>
-          <span>Sources: OpenAQ · WorldPop · WHO</span>
+        <footer className="absolute bottom-3 left-4 z-[1000] rounded border border-rail-line bg-rail-panel/80 px-2 py-1 font-mono text-[10px] text-text-faint backdrop-blur">
+          <span>Environmental Intelligence · OpenAQ · WorldPop · WHO</span>
         </footer>
       </main>
     </div>
@@ -811,7 +934,7 @@ export default function Page() {
         </div>
 
         <footer className="border-t border-rail-line pt-6 font-mono text-[11px] text-text-faint">
-          Real Rails Intelligence Library · Data &amp; Intelligence rail · Sources: OpenAQ (CC BY 4.0), WorldPop
+          Infocreon Internship - Air Quality Intelligence Platform · Sources: OpenAQ (CC BY 4.0), WorldPop
         </footer>
       </main>
     </div>
@@ -907,9 +1030,10 @@ export default function CityMapLeaflet({
       zoomSnap: 0.5,
     });
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      className: "openstreetmap-dark-tiles",
     }).addTo(map);
 
     stationLayerRef.current = L.layerGroup().addTo(map);
@@ -964,10 +1088,10 @@ export default function CityMapLeaflet({
 
       marker
         .bindTooltip(
-          `<div style="max-width:200px;font-size:10px;line-height:1.3">
+          `<div style="max-width:280px;font-size:14px;line-height:1.4">
             <div style="font-weight:600;color:#E8EDF0">${station.name}</div>
-            <div style="color:#7C8994">${station.provider}</div>
-            ${isSelected ? '<div style="color:#3FE0C5;font-weight:600;">● Selected</div>' : ''}
+            <div style="color:#9BAAB3;font-size:12px">${station.provider}</div>
+            ${isSelected ? '<div style="color:#67DABE;font-weight:600;font-size:12px">● Selected</div>' : ''}
           </div>`,
           { direction: "top", offset: [0, -4], opacity: 1, sticky: true }
         )
@@ -1278,11 +1402,11 @@ export default function Filters({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1.5">
-        <p className="font-mono text-[8px] uppercase tracking-wider text-text-faint">City</p>
+        <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint">City</p>
         <select
           value={city}
           onChange={(e) => onCityChange(e.target.value)}
-          className="focus-ring rounded border border-rail-line bg-rail-panel px-2 py-0.5 text-xs text-text-primary"
+          className="focus-ring rounded border border-rail-line bg-rail-panel px-3 py-1.5 text-sm text-text-primary"
         >
           {CITIES.map((c) => (
             <option key={c.id} value={c.id}>
@@ -1294,7 +1418,7 @@ export default function Filters({
 
       <div className="flex items-center gap-1.5">
         <div className="flex items-center gap-0.5">
-          <p className="font-mono text-[8px] uppercase tracking-wider text-text-faint">Window</p>
+          <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint">Window</p>
           <Tooltip label="How far back the time-series chart and exposure score look.">
             <span className="cursor-help font-mono text-[7px] text-text-faint">?</span>
           </Tooltip>
@@ -1304,7 +1428,7 @@ export default function Filters({
             <button
               key={n}
               onClick={() => onDaysBackChange(n)}
-              className={`focus-ring rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+              className={`focus-ring rounded border px-3 py-1.5 font-mono text-sm transition-colors ${
                 daysBack === n
                   ? "border-signal-clear/50 bg-signal-clear/15 text-signal-clear"
                   : "border-rail-line bg-rail-panel text-text-muted hover:border-rail-line-bright hover:text-text-primary"
@@ -1321,37 +1445,68 @@ export default function Filters({
 </file>
 
 <file path="components/Header.tsx">
+"use client";
+
+import { useState } from "react";
 import Tooltip from "./Tooltip";
 
 export default function Header() {
+  const [showSignature, setShowSignature] = useState(false);
+
   return (
-    <header className="border-b border-rail-line bg-rail-void/80 backdrop-blur flex-shrink-0">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-1.5">
+    <header className="absolute inset-x-0 top-0 z-[1100] border-b border-rail-line/70 bg-rail-void/75 backdrop-blur-md">
+      <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md border border-signal-clear/40 bg-signal-clear/10">
-            <span className="font-mono text-xs font-semibold text-signal-clear">AQ</span>
+          <div className="flex h-10 w-10 items-center justify-center rounded border border-signal-clear/50 bg-signal-clear/10 shadow-[0_0_20px_rgba(103,218,190,0.12)]">
+            <span className="font-mono text-sm font-semibold text-signal-clear">AI</span>
           </div>
           <div className="leading-tight">
-            <p className="font-mono text-[8px] uppercase tracking-[0.15em] text-text-faint leading-none">
-              Real Rails Intelligence Library
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal-clear leading-none">
+              Infocreon Internship
             </p>
-            <h1 className="text-sm font-semibold leading-tight text-text-primary">Air Quality Heatmap</h1>
+            <h1 className="text-lg font-semibold leading-tight text-text-primary">Air Quality Intelligence Platform</h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-[8px] uppercase tracking-wider text-text-muted">
-          <Tooltip label="This demo is built on the Data & Intelligence rail: it reads live, publicly governed sensor and population data rather than a proprietary feed.">
-            <span className="flex cursor-help items-center gap-1 rounded border border-rail-line px-1.5 py-0.5">
-              <span className="h-1 w-1 rounded-full bg-signal-clear" />
-              Rail: Data &amp; Intelligence
+        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-text-muted">
+          <Tooltip placement="bottom" label="This platform reads live, publicly governed sensor and population data rather than a proprietary feed.">
+            <span className="flex cursor-help items-center gap-2 rounded border border-rail-line px-2.5 py-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-signal-clear" />
+              Rail: Environmental Intelligence
             </span>
           </Tooltip>
           <span className="hidden items-center gap-1 rounded border border-rail-line px-1.5 py-0.5 sm:flex">
             OpenAQ · WorldPop
           </span>
+          <button
+            type="button"
+            aria-label="Open developer signature"
+            onClick={() => setShowSignature(true)}
+            className="focus-ring flex h-9 w-9 items-center justify-center rounded-full border border-signal-clear/60 text-base font-semibold text-signal-clear transition hover:bg-signal-clear/15"
+          >
+            i
+          </button>
         </div>
       </div>
       <div className="h-px w-full bg-rail-track" />
+
+      {showSignature && (
+        <div className="absolute right-4 top-[4.5rem] w-72 rounded-lg border border-rail-line-bright bg-rail-panel p-4 shadow-2xl shadow-black/40">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-[0.18em] text-signal-clear">Developer signature</p>
+              <h2 className="mt-1 text-base font-semibold text-text-primary">Infocreon Internship</h2>
+            </div>
+            <button type="button" aria-label="Close developer signature" onClick={() => setShowSignature(false)} className="focus-ring text-lg leading-none text-text-muted hover:text-text-primary">×</button>
+          </div>
+          <dl className="mt-4 space-y-3 border-t border-rail-line pt-3 font-mono text-sm">
+            <div className="flex justify-between gap-3"><dt className="text-text-faint">Architect</dt><dd className="text-right text-text-primary">Thara Asharaf</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-text-faint">POC ID</dt><dd className="text-text-primary">32</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-text-faint">GitHub</dt><dd className="text-text-primary">Thara81</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-text-faint">Stack</dt><dd className="max-w-[170px] text-right text-text-primary">Next.js · FastAPI · Tailwind · Leaflet · Recharts</dd></div>
+          </dl>
+        </div>
+      )}
     </header>
   );
 }
@@ -1371,9 +1526,9 @@ export default function PollutantSelector({
   onChange: (p: PollutantCode) => void;
 }) {
   return (
-    <div className="flex items-center gap-1">
-      <p className="font-mono text-[8px] uppercase tracking-wider text-text-faint">Pollutant</p>
-      <div className="flex flex-wrap gap-0.5">
+    <div className="flex items-center gap-2">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint">Pollutant</p>
+      <div className="flex flex-wrap gap-1">
         {POLLUTANTS.map((p) => {
           const active = p.code === value;
           const guidelineLabel =
@@ -1383,7 +1538,7 @@ export default function PollutantSelector({
               <button
                 type="button"
                 onClick={() => onChange(p.code)}
-                className={`focus-ring rounded border px-1.5 py-0.5 font-mono text-[9px] transition-colors ${
+                className={`focus-ring rounded border px-2.5 py-1.5 font-mono text-xs transition-colors ${
                   active
                     ? "border-signal-clear/50 bg-signal-clear/15 text-signal-clear"
                     : "border-rail-line bg-rail-panel text-text-muted hover:border-rail-line-bright hover:text-text-primary"
@@ -1403,53 +1558,75 @@ export default function PollutantSelector({
 <file path="components/Sidebar.tsx">
 "use client";
 
-import { ExposureScoreResult, PollutantCode } from "@/lib/types";
+import { ExposureScoreResult, PollutantCode, StationLocation } from "@/lib/types";
 import { formatConcentration } from "@/lib/exposure";
 import ExposureScore from "./ExposureScore";
 import CompareCities from "./CompareCities";
+import DownloadSampleData from "./DownloadSampleData";
 
 interface SidebarProps {
   exposure: ExposureScoreResult | null;
   exposureLoading: boolean;
   parameter: PollutantCode;
+  station: StationLocation | null;
+  points: import("@/lib/types").MeasurementPoint[];
+  cityName: string;
+  cityId: string;
+  onClose: () => void;
 }
 
-export default function Sidebar({ exposure, exposureLoading, parameter }: SidebarProps) {
+export default function Sidebar({ exposure, exposureLoading, parameter, station, points, cityName, cityId, onClose }: SidebarProps) {
   const showQuickStats = exposure && exposure.score != null && exposure.dataQuality !== "suspect";
 
   return (
-    <aside className="h-full flex flex-col gap-2 overflow-hidden">
-      {/* Exposure Score - Compact */}
-      <div className="rounded-lg border border-rail-line bg-rail-panel p-3 flex-shrink-0">
+    <aside className="flex h-full flex-col gap-4 overflow-y-auto p-5">
+      <div className="sticky top-0 z-10 -mx-5 -mt-5 flex items-start justify-between gap-3 border-b border-rail-line bg-rail-void/95 px-5 pb-4 pt-5 backdrop-blur-xl">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-signal-clear">Intelligence panel</p>
+          <h2 className="mt-1 text-xl font-semibold text-text-primary">{cityName} signal</h2>
+        </div>
+        <button type="button" aria-label="Close intelligence panel" onClick={onClose} className="focus-ring flex h-9 w-9 items-center justify-center rounded-full border border-rail-line-bright text-2xl leading-none text-text-muted transition hover:border-signal-clear hover:text-signal-clear">×</button>
+      </div>
+
+      <div className="rounded-lg border border-signal-clear/25 bg-signal-clear/5 p-4">
+        <p className="font-mono text-xs uppercase tracking-wider text-text-faint">Selected station</p>
+        <p className="mt-1 text-lg font-medium text-text-primary">{station?.name ?? "Loading station"}</p>
+        <p className="mt-1 font-mono text-xs text-text-muted">{station?.provider ?? "Monitoring network"} · {parameter.toUpperCase()}</p>
+      </div>
+
+      <div className="flex justify-end border-b border-rail-line pb-4">
+        <DownloadSampleData cityId={cityId} parameter={parameter} points={points} />
+      </div>
+
+      <div className="rounded-lg border border-rail-line bg-rail-panel p-4 flex-shrink-0">
         <ExposureScore result={exposure} loading={exposureLoading} />
       </div>
 
-      {/* Quick Stats - Compact */}
       {showQuickStats && (
         <div className="rounded-lg border border-rail-line bg-rail-panel p-3 flex-shrink-0">
-          <p className="font-mono text-[9px] uppercase tracking-wider text-text-faint mb-1.5">Quick Stats</p>
+          <p className="font-mono text-[11px] uppercase tracking-wider text-text-faint mb-1.5">Quick Stats</p>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
             <div className="flex justify-between">
-              <span className="text-text-muted text-[10px]">Concentration</span>
-              <span className="text-text-primary font-mono text-[11px]">
+              <span className="text-text-muted text-xs">Concentration</span>
+              <span className="text-text-primary font-mono text-xs">
                 {formatConcentration(exposure!.meanConcentration!, exposure!.parameter)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-muted text-[10px]">vs WHO</span>
-              <span className={`font-mono text-[11px] ${exposure!.ratioToGuideline && exposure!.ratioToGuideline > 1 ? 'text-signal-alert' : 'text-signal-good'}`}>
+              <span className="text-text-muted text-xs">vs WHO</span>
+              <span className={`font-mono text-xs ${exposure!.ratioToGuideline && exposure!.ratioToGuideline > 1 ? 'text-signal-alert' : 'text-signal-good'}`}>
                 {exposure!.ratioToGuideline}×
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-muted text-[10px]">Population</span>
-              <span className="text-text-primary font-mono text-[11px]">
+              <span className="text-text-muted text-xs">Population</span>
+              <span className="text-text-primary font-mono text-xs">
                 {exposure!.population ? exposure!.population.toLocaleString() : 'N/A'}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-muted text-[10px]">Stations</span>
-              <span className="text-text-primary font-mono text-[11px]">
+              <span className="text-text-muted text-xs">Stations</span>
+              <span className="text-text-primary font-mono text-xs">
                 {exposure!.stationsSampled || 0}
               </span>
             </div>
@@ -1457,29 +1634,26 @@ export default function Sidebar({ exposure, exposureLoading, parameter }: Sideba
         </div>
       )}
 
-      {/* Compare Cities - Fills remaining space */}
-      <div className="flex-1 min-h-0 rounded-lg border border-rail-line bg-rail-panel p-3 overflow-hidden">
+      <div className="rounded-lg border border-rail-line bg-rail-panel p-4">
         <CompareCities parameter={parameter} />
       </div>
 
-      {/* Why This Matters - Compact */}
       <div className="rounded-lg border border-rail-line bg-rail-panel p-2 flex-shrink-0">
-        <p className="font-mono text-[8px] uppercase tracking-wider text-signal-clear">Why This Matters</p>
-        <p className="text-[9px] text-text-muted leading-tight">
+        <p className="font-mono text-xs uppercase tracking-wider text-signal-clear">Why This Matters</p>
+        <p className="text-sm text-text-muted leading-snug">
           Score = concentration ÷ WHO guideline, weighted by population.
         </p>
-        <div className="text-[8px] text-text-faint font-mono truncate">
+        <div className="text-xs text-text-faint font-mono truncate">
           score = 100 × (1 − 1/(1 + max(ratio − 1, 0)))
         </div>
       </div>
 
-      {/* Data Sources - Compact */}
       <div className="rounded-lg border border-rail-line bg-rail-panel p-2 flex-shrink-0">
-        <p className="font-mono text-[8px] uppercase tracking-wider text-signal-warn">Sources</p>
-        <div className="flex gap-3 text-[9px] text-text-muted">
-          <span>OpenAQ <span className="text-text-faint text-[8px]">Air</span></span>
-          <span>WorldPop <span className="text-text-faint text-[8px]">Pop</span></span>
-          <span>WHO <span className="text-text-faint text-[8px]">Guide</span></span>
+        <p className="font-mono text-xs uppercase tracking-wider text-signal-warn">Sources</p>
+        <div className="flex gap-3 text-xs text-text-muted">
+          <span>OpenAQ <span className="text-text-faint text-[11px]">Air</span></span>
+          <span>WorldPop <span className="text-text-faint text-[11px]">Pop</span></span>
+          <span>WHO <span className="text-text-faint text-[11px]">Guide</span></span>
         </div>
       </div>
     </aside>
@@ -1503,11 +1677,13 @@ export default function TimeSeriesChart({
   parameter,
   loading,
   stationName,
+  hideHeader = false,
 }: {
   points: MeasurementPoint[];
   parameter: PollutantCode;
   loading: boolean;
   stationName: string | null;
+  hideHeader?: boolean;
 }) {
   const def = POLLUTANTS.find((p) => p.code === parameter)!;
   const data = points.map((p) => ({ ...p, label: fmtTime(p.datetime) }));
@@ -1518,12 +1694,14 @@ export default function TimeSeriesChart({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-1 flex-shrink-0">
-        <p className="font-mono text-[9px] uppercase tracking-wider text-text-faint truncate">
-          {stationName ? stationName : "Select a station on the map"}
-        </p>
-        <p className="font-mono text-[9px] text-text-faint flex-shrink-0">µg/m³</p>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between mb-1 flex-shrink-0">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint truncate">
+            {stationName ? stationName : "Select a station on the map"}
+          </p>
+          <p className="font-mono text-[10px] text-text-faint flex-shrink-0">µg/m³</p>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 rounded border border-rail-line bg-rail-panel p-1">
         {loading ? (
@@ -1633,7 +1811,7 @@ export default function Toast({ message, type = "info", duration = 3000, onClose
 
 import { useState, ReactNode } from "react";
 
-export default function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export default function Tooltip({ label, children, placement = "top" }: { label: string; children: ReactNode; placement?: "top" | "bottom" }) {
   const [open, setOpen] = useState(false);
   return (
     <span
@@ -1647,10 +1825,10 @@ export default function Tooltip({ label, children }: { label: string; children: 
       {open && (
         <span
           role="tooltip"
-          className="absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 rounded-md border border-rail-line-bright bg-rail-panel-raised px-3 py-2 text-[11px] leading-snug text-text-muted shadow-lg"
+          className={`absolute left-1/2 z-[1200] w-64 -translate-x-1/2 rounded-md border border-rail-line-bright bg-rail-panel-raised px-3 py-2 text-xs leading-snug text-text-primary shadow-2xl ${placement === "bottom" ? "top-full mt-3" : "bottom-full mb-2"}`}
         >
           {label}
-          <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-rail-line-bright" />
+          <span className={`absolute left-1/2 -translate-x-1/2 border-4 border-transparent ${placement === "bottom" ? "bottom-full border-b-rail-line-bright" : "top-full border-t-rail-line-bright"}`} />
         </span>
       )}
     </span>
@@ -3004,38 +3182,21 @@ if __name__ == "__main__":
 
 <file path="lib/adapters/openaq.ts">
 // Server-side adapter for the OpenAQ v3 API (https://docs.openaq.org).
-// This runs only inside Next.js Route Handlers (app/api/**) so the API key
-// never reaches the browser. If you swap OpenAQ for another provider, this
-// is the only file that should need to change on the read side.
-
 import { CityDef, MeasurementPoint, PollutantCode, StationLocation } from "../types";
 
 const OPENAQ_BASE = "https://api.openaq.org/v3";
 
 const SUPPORTED_PARAMETERS = new Set<PollutantCode>(["pm25", "pm10", "no2", "o3", "so2", "co"]);
 
-// Known unit strings OpenAQ reports, normalized to a µg/m³ multiplier.
-// A unit we don't recognize is dropped rather than guessed at — this is
-// the fix for the bug where CO values (and their "mg/m³"-labeled WHO
-// guideline) were compared without any conversion, producing ratios
-// ~1000x too large. See lib/exposure.ts and etl/exposure_calc.py for the
-// matching guideline-side fix.
-const UNIT_TO_UGM3: Record<string, number> = {
-  "µg/m³": 1,
-  "ug/m3": 1,
-  "mg/m³": 1000,
-  "mg/m3": 1000,
-};
-
 function normalizeToUgM3(value: number, unit: string | undefined): number | null {
   if (!Number.isFinite(value)) return null;
-  const factor = UNIT_TO_UGM3[(unit ?? "").trim()];
-  if (factor == null) return null; // e.g. ppm/ppb — no safe conversion without more context
-  return value * factor;
+  const u = (unit ?? "").trim().toLowerCase().replace(/μ|µ/g, "u");
+  if (u === "ug/m3" || u === "ug/m³") return value;
+  if (u === "mg/m3" || u === "mg/m³") return value * 1000;
+  console.warn("Unrecognized unit, dropping value:", unit);
+  return null;
 }
 
-/** Median-absolute-deviation outlier filter so one glitched sensor reading
- * can't dominate a mean. Mirrors _reject_outliers in etl/main.py. */
 function rejectOutliers(values: number[]): number[] {
   if (values.length < 4) return values;
   const sorted = [...values].sort((a, b) => a - b);
@@ -3046,9 +3207,6 @@ function rejectOutliers(values: number[]): number[] {
   return filtered.length > 0 ? filtered : values;
 }
 
-// Location responses already include their sensors. Retain that relationship
-// in this server process so a follow-up chart request does not need to spend a
-// second OpenAQ request rediscovering the same sensor.
 const sensorIdsByLocation = new Map<number, Partial<Record<PollutantCode, number>>>();
 
 function apiKey(): string {
@@ -3076,9 +3234,6 @@ async function openaqFetch(path: string, params: Record<string, string>) {
   try {
     res = await fetch(url.toString(), {
       headers: { "X-API-Key": apiKey() },
-      // OpenAQ data doesn't need to be fresher than a few minutes for this demo.
-      // A bounded request prevents one unavailable upstream connection from
-      // leaving the browser's loading state hanging indefinitely.
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(15_000),
     });
@@ -3094,7 +3249,6 @@ async function openaqFetch(path: string, params: Record<string, string>) {
   return res.json();
 }
 
-/** Find monitoring stations inside a city's bounding box. */
 export async function fetchStations(city: CityDef): Promise<StationLocation[]> {
   const data = await openaqFetch("/locations", {
     bbox: city.bbox.join(","),
@@ -3102,38 +3256,31 @@ export async function fetchStations(city: CityDef): Promise<StationLocation[]> {
   });
 
   const results: any[] = data?.results ?? [];
-  return results.map((loc) => ({
-    ...(() => {
-      const sensorIds = (loc.sensors ?? []).reduce(
-        (ids: Partial<Record<PollutantCode, number>>, sensor: any) => {
-          const name = sensor.parameter?.name;
-          if (typeof sensor.id === "number" && name && SUPPORTED_PARAMETERS.has(name as PollutantCode)) {
-            ids[name as PollutantCode] ??= sensor.id;
-          }
-          return ids;
-        },
-        {}
-      );
-      sensorIdsByLocation.set(loc.id, sensorIds);
-      return { sensorIds };
-    })(),
-    id: loc.id,
-    name: loc.name ?? `Station ${loc.id}`,
-    // Some provider responses include `coordinates:{latitude,longitude}` while
-    // others may provide top-level `latitude`/`longitude` properties. Fall
-    // back to the city center if coordinates are missing to avoid NaN in the
-    // map projection code.
-    lat: loc.coordinates?.latitude ?? loc.latitude ?? city.lat,
-    lon: loc.coordinates?.longitude ?? loc.longitude ?? city.lon,
-    provider: loc.provider?.name ?? loc.owner?.name ?? "Unknown network",
-    parameters: Object.keys(sensorIdsByLocation.get(loc.id) ?? {}) as PollutantCode[],
-    lastUpdated: loc.datetimeLast?.utc ?? null,
-  }));
+  return results.map((loc) => {
+    const sensorIds = (loc.sensors ?? []).reduce(
+      (ids: Partial<Record<PollutantCode, number>>, sensor: any) => {
+        const name = sensor.parameter?.name;
+        if (typeof sensor.id === "number" && name && SUPPORTED_PARAMETERS.has(name as PollutantCode)) {
+          ids[name as PollutantCode] ??= sensor.id;
+        }
+        return ids;
+      },
+      {}
+    );
+    sensorIdsByLocation.set(loc.id, sensorIds);
+
+    return {
+      id: loc.id,
+      name: loc.name ?? `Station ${loc.id}`,
+      lat: loc.coordinates?.latitude ?? loc.latitude ?? city.lat,
+      lon: loc.coordinates?.longitude ?? loc.longitude ?? city.lon,
+      provider: loc.provider?.name ?? loc.owner?.name ?? "Unknown network",
+      parameters: Object.keys(sensorIds) as PollutantCode[],
+      lastUpdated: loc.datetimeLast?.utc ?? null,
+    };
+  });
 }
 
-/** Pull recent measurement time series for one station + pollutant.
- * All returned values are normalized to µg/m³; readings with an
- * unrecognized unit are dropped rather than mis-scaled. */
 export async function fetchMeasurements(
   locationId: number,
   parameter: PollutantCode,
@@ -3142,10 +3289,6 @@ export async function fetchMeasurements(
   const dateTo = new Date();
   const dateFrom = new Date(dateTo.getTime() - daysBack * 24 * 60 * 60 * 1000);
 
-  // OpenAQ v3 attaches measurements to sensors, not locations. Resolve the
-  // station's sensor for the selected pollutant, then query its time series.
-  // Choosing the most recently updated matching sensor avoids stale duplicate
-  // sensors at a physical station.
   let sensorId = sensorIdsByLocation.get(locationId)?.[parameter];
   if (!sensorId) {
     const sensorData = await openaqFetch(`/locations/${locationId}/sensors`, {});
@@ -3181,24 +3324,23 @@ export async function fetchMeasurements(
     .sort((a, b) => a.datetime.localeCompare(b.datetime));
 }
 
-/** Convenience: mean concentration (µg/m³) for a city across all its
- * stations for one pollutant, with outlier rejection so a single glitched
- * sensor can't blow up the mean. */
 export async function fetchCityMeanConcentration(
   city: CityDef,
   parameter: PollutantCode
 ): Promise<{ mean: number | null; unit: string; sampleStations: number }> {
   const stations = await fetchStations(city);
-  // Prefer stations that advertise the requested parameter, but if the
-  // provider's metadata is empty (some OpenAQ responses omit parameter lists),
-  // fall back to probing the first few stations for measurements directly.
   let relevant = stations.filter((s) => s.parameters.includes(parameter)).slice(0, 6);
   if (relevant.length === 0) {
     relevant = stations.slice(0, 6);
   }
 
   const seriesList = await Promise.all(
-    relevant.map((s) => fetchMeasurements(s.id, parameter, 2).catch(() => [] as MeasurementPoint[]))
+    relevant.map((s) =>
+      fetchMeasurements(s.id, parameter, 2).catch((err) => {
+        console.error(`measurements fail station ${s.id}:`, err);
+        return [] as MeasurementPoint[];
+      })
+    )
   );
   const allValues = seriesList.flat().map((p) => p.value);
   if (allValues.length === 0) return { mean: null, unit: "µg/m³", sampleStations: relevant.length };
@@ -3640,7 +3782,7 @@ module.exports = {
 <file path="README.md">
 # Air Quality Heatmap
 
-Part of the **Real Rails Intelligence Library** — rail: **Data & Intelligence**.
+Infocreon Internship - Air Quality Intelligence Platform.
 
 A live dashboard that scores how much of a city's pollutant exposure exceeds
 WHO 2021 guidelines, weighted by who actually lives there. Built on two
@@ -3727,15 +3869,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        "rail-void": "#0A0D10",
-        "rail-panel": "#12171C",
-        "rail-panel-raised": "#161D23",
-        "rail-line": "#232B31",
-        "rail-line-bright": "#33414A",
+        "rail-void": "#07110F",
+        "rail-panel": "#0D1B19",
+        "rail-panel-raised": "#112522",
+        "rail-line": "#1D3833",
+        "rail-line-bright": "#31564E",
         "text-primary": "#E8EDF0",
         "text-muted": "#7C8994",
         "text-faint": "#4B565F",
-        "signal-clear": "#3FE0C5",
+        "signal-clear": "#67DABE",
         "signal-good": "#7ED957",
         "signal-warn": "#F5A623",
         "signal-alert": "#E85D4C",

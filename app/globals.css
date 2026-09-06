@@ -7,27 +7,65 @@
 }
 
 body {
-  background-color: #0a0d10;
+  background-color: #07110f;
   background-image:
-    radial-gradient(ellipse 900px 500px at 15% -10%, rgba(63, 224, 197, 0.06), transparent 60%),
-    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(245, 166, 35, 0.04), transparent 55%);
+    linear-gradient(120deg, rgba(7, 17, 15, 0.98), rgba(5, 12, 14, 0.98)),
+    repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(103, 218, 190, 0.025) 40px),
+    repeating-linear-gradient(90deg, transparent 0, transparent 39px, rgba(103, 218, 190, 0.025) 40px);
   color: #e8edf0;
 }
 
 ::selection {
-  background: #3fe0c5;
-  color: #0a0d10;
+  background: #67dabe;
+  color: #07110f;
 }
 
 /* Thin, technical scrollbars to match the instrument-panel feel */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #0a0d10; }
-::-webkit-scrollbar-thumb { background: #232b31; border-radius: 999px; border: 2px solid #0a0d10; }
+::-webkit-scrollbar-track { background: #07110f; }
+::-webkit-scrollbar-thumb { background: #29443f; border-radius: 999px; border: 2px solid #07110f; }
 ::-webkit-scrollbar-thumb:hover { background: #33414a; }
 
 .focus-ring:focus-visible {
-  outline: 2px solid #3fe0c5;
+  outline: 2px solid #67dabe;
   outline-offset: 2px;
+}
+
+/* Keep Leaflet's station tooltips legible against the dark intelligence map. */
+.leaflet-tooltip {
+  background: #112522;
+  border: 1px solid #67dabe;
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  color: #e8edf0;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 8px 10px;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: #67dabe;
+}
+
+.openstreetmap-dark-tiles {
+  filter: invert(92%) hue-rotate(155deg) saturate(55%) brightness(62%) contrast(115%);
+}
+
+.leaflet-control-zoom {
+  margin-top: 178px !important;
+  margin-left: 12px !important;
+}
+
+@media (max-width: 640px) {
+  .leaflet-control-zoom {
+    margin-top: 228px !important;
+  }
+}
+
+@media (max-height: 520px) {
+  .signal-graph {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

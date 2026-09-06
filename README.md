@@ -1,6 +1,6 @@
 # Air Quality Heatmap
 
-Part of the **Real Rails Intelligence Library** — rail: **Data & Intelligence**.
+Infocreon Internship - Air Quality Intelligence Platform.
 
 A live dashboard that scores how much of a city's pollutant exposure exceeds
 WHO 2021 guidelines, weighted by who actually lives there. Built on two
@@ -29,6 +29,92 @@ npm run dev
 ```
 
 Open http://localhost:3000.
+
+## Production containers
+
+The repository includes a standalone Next.js image in `Dockerfile` and an
+independent FastAPI image in `etl/Dockerfile`. The services deliberately keep
+their current boundary:
+
+- The browser calls same-origin Next.js routes under `/api`.
+- Next.js calls OpenAQ and WorldPop directly from server-side adapters.
+- FastAPI runs the existing `etl/main.py` application and does not receive
+  requests from Next.js.
+- Both services mount `./data` at `/app/data`. The ETL service writes
+  `data/exposure_scores.json`, and the Next.js snapshot route reads the same
+  file.
+
+Recommended repository changes for deployment are already represented by:
+
+- `next.config.js` using `output: "standalone"` for a minimal production
+  Node runtime.
+- Multi-stage `Dockerfile` builds with Node 20 and a non-root runtime user.
+- `etl/Dockerfile` running Uvicorn without `--reload`.
+- `docker-compose.yml` sharing the snapshot directory without inventing a
+  frontend-to-ETL network call.
+- `.dockerignore` excluding local dependencies, build output, secrets, and
+  generated metadata while retaining the snapshot directory.
+- `.env.example` documenting the server-side API variables.
+
+The snapshot file is intentionally gitignored. When deploying from a checkout
+that does not already contain `data/exposure_scores.json`, start the stack and
+run the ETL job before expecting `/api/exposure/snapshot` to return scores.
+
+Create `.env` from `.env.example` and add the server-side OpenAQ key. Do not
+use a `NEXT_PUBLIC_` prefix: the key must never be exposed to the browser.
+
+```bash
+cp .env.example .env
+# edit .env and set OPENAQ_API_KEY
+docker compose build
+docker compose up -d
+```
+
+Refresh the shared snapshot:
+
+```bash
+curl -X POST http://localhost:8010/run
+curl http://localhost:3000/api/exposure/snapshot
+```
+
+Useful operational commands:
+
+```bash
+docker compose logs -f nextjs
+docker compose logs -f fastapi
+docker compose ps
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+On PowerShell, the ETL trigger can be sent with:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8010/run
+```
+
+## Container validation checklist
+
+- [ ] `docker compose config` succeeds.
+- [ ] Both images build without missing-module or missing-file errors.
+- [ ] `http://localhost:3000` loads the full-screen Cinematic Rail UI.
+- [ ] The dark Leaflet map, tiles, station markers, and selected marker render.
+- [ ] City, time-window, and pollutant controls work.
+- [ ] The sidebar, exposure score, comparison panel, chart, download controls,
+      and developer signature work.
+- [ ] `GET /api/exposure/snapshot` returns the shared snapshot after ETL has
+      generated `data/exposure_scores.json`.
+- [ ] OpenAQ routes work when `OPENAQ_API_KEY` is supplied and fail without
+      leaking the key to browser code.
+- [ ] WorldPop requests either return population data or degrade to the
+      existing unavailable/partial behavior.
+- [ ] `http://localhost:8010/docs` loads and `POST /run` completes.
+- [ ] `GET http://localhost:8010/snapshot` reflects the shared data directory.
+- [ ] Logs contain no connection-refused, module-not-found, or missing-file
+      errors.
+- [ ] The containers use the shared data directory; no localhost or FastAPI
+      hostname is required by the current frontend architecture.
 
 ## Run the batch ETL (optional)
 

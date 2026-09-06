@@ -5,15 +5,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        "rail-void": "#0A0D10",
-        "rail-panel": "#12171C",
-        "rail-panel-raised": "#161D23",
-        "rail-line": "#232B31",
-        "rail-line-bright": "#33414A",
+        "rail-void": "#07110F",
+        "rail-panel": "#0D1B19",
+        "rail-panel-raised": "#112522",
+        "rail-line": "#1D3833",
+        "rail-line-bright": "#31564E",
         "text-primary": "#E8EDF0",
         "text-muted": "#7C8994",
         "text-faint": "#4B565F",
-        "signal-clear": "#3FE0C5",
+        "signal-clear": "#67DABE",
         "signal-good": "#7ED957",
         "signal-warn": "#F5A623",
         "signal-alert": "#E85D4C",

@@ -5,9 +5,8 @@ import Header from "@/components/Header";
 import Filters from "@/components/Filters";
 import PollutantSelector from "@/components/PollutantSelector";
 import CityMap from "@/components/CityMap";
-import TimeSeriesChart from "@/components/TimeSeriesChart";
-import DownloadSampleData from "@/components/DownloadSampleData";
 import Sidebar from "@/components/Sidebar";
+import TimeSeriesChart from "@/components/TimeSeriesChart";
 import { getCity } from "@/lib/cities";
 import { ExposureScoreResult, MeasurementPoint, PollutantCode, StationLocation } from "@/lib/types";
 
@@ -70,6 +69,7 @@ export default function Page() {
 
   const [exposure, setExposure] = useState<ExposureScoreResult | null>(null);
   const [exposureLoading, setExposureLoading] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -109,6 +109,7 @@ export default function Page() {
     setStationsLoading(true);
     setStationsError(null);
     setSelectedStationId(null);
+    setPanelOpen(false);
     setPoints([]);
 
     fetch(`/api/openaq/locations?city=${cityId}`)
@@ -198,21 +199,25 @@ export default function Page() {
   }, [selectedStationId, parameter, daysBack, stations]);
 
   const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null;
+  const selectStation = (id: number) => {
+    setSelectedStationId(id);
+    setPanelOpen(true);
+  };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="relative h-screen overflow-hidden bg-rail-void">
       <Header />
 
-      <main className="flex-1 flex flex-col min-h-0 mx-auto max-w-7xl w-full px-3 py-1.5">
+      <main className="relative h-full w-full">
         {stationsError && (
-          <div className="rounded-lg border border-signal-alert/40 bg-signal-alert/10 p-1.5 text-xs text-signal-alert mb-1.5 flex-shrink-0">
+          <div className="absolute left-4 top-24 z-[1050] rounded-lg border border-signal-alert/40 bg-rail-panel/95 p-2 text-xs text-signal-alert shadow-xl">
             <p className="font-mono text-[9px] uppercase tracking-wider">Live data unavailable</p>
             <p className="text-text-primary text-[10px]">{stationsError}</p>
           </div>
         )}
 
-        <div className="rounded-lg border border-rail-line bg-rail-panel-raised p-1.5 mb-1.5 flex-shrink-0">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="absolute left-4 right-4 top-[5.75rem] z-[1000] flex justify-between gap-3 pointer-events-none">
+          <div className="pointer-events-auto flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-3 rounded-lg border border-rail-line-bright bg-rail-panel/95 p-3 shadow-xl backdrop-blur-md">
             <Filters
               city={cityId}
               onCityChange={setCityId}
@@ -221,53 +226,54 @@ export default function Page() {
             />
             <PollutantSelector value={parameter} onChange={setParameter} />
           </div>
+          <div className="hidden self-start rounded-lg border border-rail-line bg-rail-panel/90 px-4 py-3 font-mono text-xs uppercase tracking-wider text-text-muted shadow-xl backdrop-blur-md sm:block">
+            Click a marker to inspect intelligence
+          </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-2 min-h-0">
-          <div className="lg:col-span-2 flex flex-col gap-2 min-h-0">
-            <div className="flex-shrink-0" style={{ height: '40%' }}>
-              <div className="flex items-center justify-between mb-0.5">
-                <p className="font-mono text-[9px] uppercase tracking-wider text-text-faint">
-                  {city.name} · {stations.length} stations
-                </p>
-                <span className="font-mono text-[9px] text-text-faint">
-                  {parameter.toUpperCase()}
-                </span>
-              </div>
-              <CityMap
-                city={city}
-                stations={stations}
-                selectedStationId={selectedStationId}
-                onSelectStation={setSelectedStationId}
-                loading={stationsLoading}
-              />
-            </div>
+        <div className="absolute inset-0 p-2 pt-2">
+          <CityMap
+            city={city}
+            stations={stations}
+            selectedStationId={selectedStationId}
+            onSelectStation={selectStation}
+            loading={stationsLoading}
+          />
+        </div>
 
-            <div className="flex-1 min-h-0 rounded-lg border border-rail-line bg-rail-panel p-1.5 flex flex-col">
-              <TimeSeriesChart
-                points={points}
-                parameter={parameter}
-                loading={seriesLoading}
-                stationName={selectedStation?.name ?? null}
-              />
-              <div className="mt-0.5 flex justify-end flex-shrink-0">
-                <DownloadSampleData cityId={cityId} parameter={parameter} points={points} />
-              </div>
+        <aside className={`absolute right-2 top-20 bottom-2 z-[1050] w-[min(500px,calc(100%-1rem))] overflow-hidden rounded-lg border border-rail-line-bright bg-rail-void/95 shadow-2xl shadow-black/50 backdrop-blur-xl transition-transform duration-300 ease-out ${panelOpen ? "translate-x-0" : "translate-x-[calc(100%+1rem)]"}`}>
+          <Sidebar
+            exposure={exposure}
+            exposureLoading={exposureLoading}
+            parameter={parameter}
+            station={selectedStation}
+            points={points}
+            cityName={city.name}
+            cityId={cityId}
+            onClose={() => setPanelOpen(false)}
+          />
+        </aside>
+
+        <div className="signal-graph absolute bottom-10 left-4 z-[1000] h-56 w-[min(560px,calc(100%-2rem))] rounded-xl border border-rail-line-bright bg-rail-panel/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-signal-clear">Live signal graph</p>
+              <p className="mt-0.5 text-sm font-medium text-text-primary">{selectedStation?.name ?? "Waiting for station data"}</p>
             </div>
+            <span className="rounded border border-rail-line px-2 py-1 font-mono text-[10px] text-text-muted">{daysBack} DAY WINDOW</span>
           </div>
-
-          <div className="lg:col-span-1 min-h-0">
-            <Sidebar
-              exposure={exposure}
-              exposureLoading={exposureLoading}
+          <div className="h-[calc(100%-3.25rem)]">
+            <TimeSeriesChart
+              points={points}
               parameter={parameter}
+              loading={seriesLoading || stationsLoading}
+              stationName={null}
             />
           </div>
         </div>
 
-        <footer className="mt-0.5 border-t border-rail-line pt-0.5 font-mono text-[8px] text-text-faint flex flex-wrap justify-between items-center flex-shrink-0">
-          <span>Real Rails Intelligence Library · Data &amp; Intelligence rail</span>
-          <span>Sources: OpenAQ · WorldPop · WHO</span>
+        <footer className="absolute bottom-3 left-4 z-[1000] rounded border border-rail-line bg-rail-panel/80 px-2 py-1 font-mono text-[10px] text-text-faint backdrop-blur">
+          <span>Environmental Intelligence · OpenAQ · WorldPop · WHO</span>
         </footer>
       </main>
     </div>

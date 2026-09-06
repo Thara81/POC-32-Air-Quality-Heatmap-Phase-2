@@ -45,9 +45,10 @@ export default function CityMapLeaflet({
       zoomSnap: 0.5,
     });
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      className: "openstreetmap-dark-tiles",
     }).addTo(map);
 
     stationLayerRef.current = L.layerGroup().addTo(map);
@@ -102,10 +103,10 @@ export default function CityMapLeaflet({
 
       marker
         .bindTooltip(
-          `<div style="max-width:200px;font-size:10px;line-height:1.3">
+          `<div style="max-width:280px;font-size:14px;line-height:1.4">
             <div style="font-weight:600;color:#E8EDF0">${station.name}</div>
-            <div style="color:#7C8994">${station.provider}</div>
-            ${isSelected ? '<div style="color:#3FE0C5;font-weight:600;">● Selected</div>' : ''}
+            <div style="color:#9BAAB3;font-size:12px">${station.provider}</div>
+            ${isSelected ? '<div style="color:#67DABE;font-weight:600;font-size:12px">● Selected</div>' : ''}
           </div>`,
           { direction: "top", offset: [0, -4], opacity: 1, sticky: true }
         )

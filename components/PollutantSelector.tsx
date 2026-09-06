@@ -11,9 +11,9 @@ export default function PollutantSelector({
   onChange: (p: PollutantCode) => void;
 }) {
   return (
-    <div className="flex items-center gap-1">
-      <p className="font-mono text-[8px] uppercase tracking-wider text-text-faint">Pollutant</p>
-      <div className="flex flex-wrap gap-0.5">
+    <div className="flex items-center gap-2">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint">Pollutant</p>
+      <div className="flex flex-wrap gap-1">
         {POLLUTANTS.map((p) => {
           const active = p.code === value;
           const guidelineLabel =
@@ -23,7 +23,7 @@ export default function PollutantSelector({
               <button
                 type="button"
                 onClick={() => onChange(p.code)}
-                className={`focus-ring rounded border px-1.5 py-0.5 font-mono text-[9px] transition-colors ${
+                className={`focus-ring rounded border px-2.5 py-1.5 font-mono text-xs transition-colors ${
                   active
                     ? "border-signal-clear/50 bg-signal-clear/15 text-signal-clear"
                     : "border-rail-line bg-rail-panel text-text-muted hover:border-rail-line-bright hover:text-text-primary"

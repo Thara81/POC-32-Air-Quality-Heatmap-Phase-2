@@ -13,11 +13,13 @@ export default function TimeSeriesChart({
   parameter,
   loading,
   stationName,
+  hideHeader = false,
 }: {
   points: MeasurementPoint[];
   parameter: PollutantCode;
   loading: boolean;
   stationName: string | null;
+  hideHeader?: boolean;
 }) {
   const def = POLLUTANTS.find((p) => p.code === parameter)!;
   const data = points.map((p) => ({ ...p, label: fmtTime(p.datetime) }));
@@ -28,12 +30,14 @@ export default function TimeSeriesChart({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-1 flex-shrink-0">
-        <p className="font-mono text-[9px] uppercase tracking-wider text-text-faint truncate">
-          {stationName ? stationName : "Select a station on the map"}
-        </p>
-        <p className="font-mono text-[9px] text-text-faint flex-shrink-0">µg/m³</p>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between mb-1 flex-shrink-0">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-text-faint truncate">
+            {stationName ? stationName : "Select a station on the map"}
+          </p>
+          <p className="font-mono text-[10px] text-text-faint flex-shrink-0">µg/m³</p>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 rounded border border-rail-line bg-rail-panel p-1">
         {loading ? (

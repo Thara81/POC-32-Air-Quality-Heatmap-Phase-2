@@ -2,7 +2,7 @@
 
 import { useState, ReactNode } from "react";
 
-export default function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export default function Tooltip({ label, children, placement = "top" }: { label: string; children: ReactNode; placement?: "top" | "bottom" }) {
   const [open, setOpen] = useState(false);
   return (
     <span
@@ -16,10 +16,10 @@ export default function Tooltip({ label, children }: { label: string; children: 
       {open && (
         <span
           role="tooltip"
-          className="absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 rounded-md border border-rail-line-bright bg-rail-panel-raised px-3 py-2 text-[11px] leading-snug text-text-muted shadow-lg"
+          className={`absolute left-1/2 z-[1200] w-64 -translate-x-1/2 rounded-md border border-rail-line-bright bg-rail-panel-raised px-3 py-2 text-xs leading-snug text-text-primary shadow-2xl ${placement === "bottom" ? "top-full mt-3" : "bottom-full mb-2"}`}
         >
           {label}
-          <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-rail-line-bright" />
+          <span className={`absolute left-1/2 -translate-x-1/2 border-4 border-transparent ${placement === "bottom" ? "bottom-full border-b-rail-line-bright" : "top-full border-t-rail-line-bright"}`} />
         </span>
       )}
     </span>

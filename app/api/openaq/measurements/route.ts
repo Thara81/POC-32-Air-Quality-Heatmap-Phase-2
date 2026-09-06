@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMeasurements, OpenAQConfigError, OpenAQUpstreamError } from "@/lib/adapters/openaq";
 import { PollutantCode } from "@/lib/types";
+import { getMockMeasurements } from "@/lib/mock-data";
 
 export async function GET(req: NextRequest) {
   const locationId = Number(req.nextUrl.searchParams.get("locationId"));
@@ -13,13 +14,16 @@ export async function GET(req: NextRequest) {
 
   try {
     const points = await fetchMeasurements(locationId, parameter, daysBack);
+    if (points.length === 0) {
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
+    }
     return NextResponse.json({ locationId, parameter, points });
   } catch (err) {
     if (err instanceof OpenAQConfigError) {
-      return NextResponse.json({ error: err.message, code: "config" }, { status: 503 });
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
     }
     if (err instanceof OpenAQUpstreamError) {
-      return NextResponse.json({ error: err.message, code: "upstream" }, { status: 502 });
+      return NextResponse.json({ locationId, parameter, points: getMockMeasurements(locationId, parameter, daysBack), source: "mock" });
     }
     return NextResponse.json({ error: "Unexpected error fetching measurements" }, { status: 500 });
   }

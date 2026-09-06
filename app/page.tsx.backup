@@ -212,7 +212,7 @@ export default function Page() {
         </div>
 
         <footer className="border-t border-rail-line pt-6 font-mono text-[11px] text-text-faint">
-          Real Rails Intelligence Library · Data &amp; Intelligence rail · Sources: OpenAQ (CC BY 4.0), WorldPop
+          Infocreon Internship - Air Quality Intelligence Platform · Sources: OpenAQ (CC BY 4.0), WorldPop
         </footer>
       </main>
     </div>
