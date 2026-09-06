@@ -28,6 +28,7 @@ Run a single batch:  OPENAQ_API_KEY=... python etl/main.py --once
 Serve it:            uvicorn etl.main:app --reload --port 8010
 """
 import asyncio
+import email.utils
 import json
 import os
 import statistics
@@ -67,6 +68,8 @@ UNIT_TO_UGM3 = {
     "ug/m3": 1.0,
     "mg/m3": 1000.0,
 }
+OPENAQ_MAX_RETRIES = 2
+OPENAQ_BACKOFF_SECONDS = 1.0
 
 
 def _normalize_to_ugm3(value: float, unit: Optional[str]) -> Optional[float]:
@@ -87,6 +90,66 @@ def _log_openaq_error(response: httpx.Response, request_name: str) -> None:
     print(f"  OpenAQ {request_name} failed ({response.status_code}): {body}")
 
 
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                retry_at = email.utils.parsedate_to_datetime(retry_after)
+                return max(0.0, retry_at.timestamp() - datetime.now(timezone.utc).timestamp())
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return OPENAQ_BACKOFF_SECONDS * (2 ** attempt)
+
+
+async def _openaq_get(
+    client: httpx.AsyncClient, path: str, params: dict, headers: dict, request_name: str
+) -> Optional[httpx.Response]:
+    for attempt in range(OPENAQ_MAX_RETRIES + 1):
+        try:
+            response = await client.get(f"{OPENAQ_BASE}{path}", params=params, headers=headers)
+        except httpx.HTTPError as exc:
+            print(f"  OpenAQ {request_name} request failed: {exc}")
+            return None
+        if response.status_code != 429 or attempt == OPENAQ_MAX_RETRIES:
+            return response
+        delay = _retry_delay(response, attempt)
+        print(f"  OpenAQ {request_name} rate limited (429); retrying in {delay:.1f}s")
+        await asyncio.sleep(delay)
+    return None
+
+
+async def discover_city_sensors(
+    client: httpx.AsyncClient, bbox, headers: dict
+) -> dict[str, list[tuple[dict, dict]]]:
+    """Discover each city's pollutant sensors once for the current ETL run."""
+    loc_res = await _openaq_get(
+        client,
+        "/locations",
+        {"bbox": ",".join(map(str, bbox)), "limit": 50},
+        headers,
+        "locations request",
+    )
+    if loc_res is None:
+        return {}
+    if loc_res.status_code != 200:
+        _log_openaq_error(loc_res, "locations request")
+        return {}
+
+    sensors_by_parameter: dict[str, list[tuple[dict, dict]]] = {parameter: [] for parameter in POLLUTANTS}
+    for station in loc_res.json().get("results", []):
+        seen_parameters = set()
+        for sensor in station.get("sensors", []):
+            parameter = sensor.get("parameter", {}).get("name")
+            sensor_id = sensor.get("id")
+            if parameter in sensors_by_parameter and parameter not in seen_parameters and isinstance(sensor_id, int):
+                sensors_by_parameter[parameter].append((station, sensor))
+                seen_parameters.add(parameter)
+    return {parameter: sensors[:6] for parameter, sensors in sensors_by_parameter.items()}
+
+
 def _reject_outliers(values: list[float]) -> list[float]:
     """Median-absolute-deviation filter so one glitched sensor reading
     can't dominate a city's mean. Falls back to returning everything if
@@ -100,7 +163,8 @@ def _reject_outliers(values: list[float]) -> list[float]:
 
 
 async def fetch_city_mean_ugm3(
-    client: httpx.AsyncClient, bbox, parameter: str
+    client: httpx.AsyncClient, bbox, parameter: str,
+    sensors_by_parameter: Optional[dict[str, list[tuple[dict, dict]]]] = None,
 ) -> tuple[Optional[float], int]:
     """Returns (mean concentration in µg/m³, stations sampled)."""
     api_key = os.environ.get("OPENAQ_API_KEY")
@@ -109,27 +173,9 @@ async def fetch_city_mean_ugm3(
 
     headers = {"X-API-Key": api_key}
 
-    try:
-        loc_res = await client.get(
-            f"{OPENAQ_BASE}/locations",
-            params={"bbox": ",".join(map(str, bbox)), "limit": 50},
-            headers=headers,
-        )
-    except httpx.HTTPError as exc:
-        print(f"  OpenAQ locations request failed: {exc}")
-        return None, 0
-    if loc_res.status_code != 200:
-        _log_openaq_error(loc_res, "locations request")
-        return None, 0
-
-    stations = loc_res.json().get("results", [])
-    relevant = []
-    for s in stations:
-        for sensor in s.get("sensors", []):
-            sensor_parameter = sensor.get("parameter", {})
-            if sensor_parameter.get("name") == parameter and isinstance(sensor.get("id"), int):
-                relevant.append((s, sensor))
-                break
+    if sensors_by_parameter is None:
+        sensors_by_parameter = await discover_city_sensors(client, bbox, headers)
+    relevant = sensors_by_parameter.get(parameter, [])[:6]
 
     if not relevant:
         return None, 0
@@ -142,18 +188,18 @@ async def fetch_city_mean_ugm3(
     for station, sensor in relevant:
         # v3 measurements are addressed by sensor. The sensor metadata above
         # resolves the pollutant name to its numeric OpenAQ parameter/sensor.
-        try:
-            m_res = await client.get(
-                f"{OPENAQ_BASE}/sensors/{sensor['id']}/measurements",
-                params={
-                    "datetime_from": date_from.isoformat(),
-                    "datetime_to": date_to.isoformat(),
-                    "limit": 100,
-                },
-                headers=headers,
-            )
-        except httpx.HTTPError as exc:
-            print(f"  OpenAQ sensor {sensor['id']} request failed: {exc}")
+        m_res = await _openaq_get(
+            client,
+            f"/sensors/{sensor['id']}/measurements",
+            {
+                "datetime_from": date_from.isoformat(),
+                "datetime_to": date_to.isoformat(),
+                "limit": 100,
+            },
+            headers,
+            f"sensor {sensor['id']} measurements request",
+        )
+        if m_res is None:
             continue
         if m_res.status_code != 200:
             _log_openaq_error(m_res, f"sensor {sensor['id']} measurements request")
@@ -214,9 +260,15 @@ async def run_etl() -> list[dict]:
             print(f"\n📍 [{idx}/{len(CITIES)}] {city['name']}...")
             population = await fetch_population(client, city["bbox"])
             print(f"  👥 Population: {population:,}" if population else "  👥 Population: unavailable")
+            api_key = os.environ.get("OPENAQ_API_KEY")
+            city_sensors = await discover_city_sensors(
+                client, city["bbox"], {"X-API-Key": api_key}
+            ) if api_key else {}
 
             for parameter in POLLUTANTS:
-                mean_ugm3, n_stations = await fetch_city_mean_ugm3(client, city["bbox"], parameter)
+                mean_ugm3, n_stations = await fetch_city_mean_ugm3(
+                    client, city["bbox"], parameter, city_sensors
+                )
                 score = compute_exposure_score(city["id"], parameter, mean_ugm3, population)
                 score["cityName"] = city["name"]
                 score["country"] = city["country"]
