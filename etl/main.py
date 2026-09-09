@@ -29,6 +29,7 @@ Serve it:            uvicorn etl.main:app --reload --port 8010
 """
 import asyncio
 import email.utils
+import hashlib
 import json
 import os
 import statistics
@@ -70,6 +71,18 @@ UNIT_TO_UGM3 = {
 }
 OPENAQ_MAX_RETRIES = 2
 OPENAQ_BACKOFF_SECONDS = 1.0
+OPENAQ_MAX_SENSORS_PER_PARAMETER = 2
+OPENAQ_MIN_REQUEST_INTERVAL = 1.1
+OPENAQ_HOURLY_LIMIT = 48
+
+MOCK_CONCENTRATION_RANGES_UGM3 = {
+    "pm25": (3.0, 80.0),
+    "pm10": (10.0, 180.0),
+    "no2": (5.0, 150.0),
+    "o3": (30.0, 220.0),
+    "so2": (5.0, 100.0),
+    "co": (500.0, 10000.0),
+}
 
 
 def _normalize_to_ugm3(value: float, unit: Optional[str]) -> Optional[float]:
@@ -90,6 +103,29 @@ def _log_openaq_error(response: httpx.Response, request_name: str) -> None:
     print(f"  OpenAQ {request_name} failed ({response.status_code}): {body}")
 
 
+def generate_mock_concentration(city_id: str, parameter: str) -> float:
+    """Return deterministic demo data, explicitly kept separate from OpenAQ."""
+    minimum, maximum = MOCK_CONCENTRATION_RANGES_UGM3[parameter]
+    digest = hashlib.sha256(f"{city_id}:{parameter}".encode("ascii")).digest()
+    fraction = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
+    return round(minimum + fraction * (maximum - minimum), 2)
+
+
+class OpenAQRequestPacer:
+    def __init__(self, minimum_interval: float = OPENAQ_MIN_REQUEST_INTERVAL):
+        self.minimum_interval = minimum_interval
+        self._last_request_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            delay = self.minimum_interval - (now - self._last_request_at)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._last_request_at = asyncio.get_running_loop().time()
+
+
 def _retry_delay(response: httpx.Response, attempt: int) -> float:
     retry_after = response.headers.get("Retry-After")
     if retry_after:
@@ -105,9 +141,12 @@ def _retry_delay(response: httpx.Response, attempt: int) -> float:
 
 
 async def _openaq_get(
-    client: httpx.AsyncClient, path: str, params: dict, headers: dict, request_name: str
+    client: httpx.AsyncClient, path: str, params: dict, headers: dict, request_name: str,
+    pacer: Optional[OpenAQRequestPacer] = None,
 ) -> Optional[httpx.Response]:
     for attempt in range(OPENAQ_MAX_RETRIES + 1):
+        if pacer is not None:
+            await pacer.wait()
         try:
             response = await client.get(f"{OPENAQ_BASE}{path}", params=params, headers=headers)
         except httpx.HTTPError as exc:
@@ -122,7 +161,8 @@ async def _openaq_get(
 
 
 async def discover_city_sensors(
-    client: httpx.AsyncClient, bbox, headers: dict
+    client: httpx.AsyncClient, bbox, headers: dict,
+    pacer: Optional[OpenAQRequestPacer] = None,
 ) -> dict[str, list[tuple[dict, dict]]]:
     """Discover each city's pollutant sensors once for the current ETL run."""
     loc_res = await _openaq_get(
@@ -131,6 +171,7 @@ async def discover_city_sensors(
         {"bbox": ",".join(map(str, bbox)), "limit": 50},
         headers,
         "locations request",
+        pacer,
     )
     if loc_res is None:
         return {}
@@ -147,7 +188,10 @@ async def discover_city_sensors(
             if parameter in sensors_by_parameter and parameter not in seen_parameters and isinstance(sensor_id, int):
                 sensors_by_parameter[parameter].append((station, sensor))
                 seen_parameters.add(parameter)
-    return {parameter: sensors[:6] for parameter, sensors in sensors_by_parameter.items()}
+    return {
+        parameter: sensors[:OPENAQ_MAX_SENSORS_PER_PARAMETER]
+        for parameter, sensors in sensors_by_parameter.items()
+    }
 
 
 def _reject_outliers(values: list[float]) -> list[float]:
@@ -165,6 +209,7 @@ def _reject_outliers(values: list[float]) -> list[float]:
 async def fetch_city_mean_ugm3(
     client: httpx.AsyncClient, bbox, parameter: str,
     sensors_by_parameter: Optional[dict[str, list[tuple[dict, dict]]]] = None,
+    pacer: Optional[OpenAQRequestPacer] = None,
 ) -> tuple[Optional[float], int]:
     """Returns (mean concentration in µg/m³, stations sampled)."""
     api_key = os.environ.get("OPENAQ_API_KEY")
@@ -174,30 +219,31 @@ async def fetch_city_mean_ugm3(
     headers = {"X-API-Key": api_key}
 
     if sensors_by_parameter is None:
-        sensors_by_parameter = await discover_city_sensors(client, bbox, headers)
-    relevant = sensors_by_parameter.get(parameter, [])[:6]
+        sensors_by_parameter = await discover_city_sensors(client, bbox, headers, pacer)
+    relevant = sensors_by_parameter.get(parameter, [])[:OPENAQ_MAX_SENSORS_PER_PARAMETER]
 
     if not relevant:
         return None, 0
 
-    relevant = relevant[:6]
     raw_values: list[float] = []
 
     date_to = datetime.now(timezone.utc)
     date_from = date_to - timedelta(days=7)
     for station, sensor in relevant:
-        # v3 measurements are addressed by sensor. The sensor metadata above
-        # resolves the pollutant name to its numeric OpenAQ parameter/sensor.
+        # Hourly aggregates keep the seven-day window while avoiding hundreds
+        # of raw readings per sensor.
         m_res = await _openaq_get(
             client,
-            f"/sensors/{sensor['id']}/measurements",
+            f"/sensors/{sensor['id']}/hours",
             {
                 "datetime_from": date_from.isoformat(),
                 "datetime_to": date_to.isoformat(),
-                "limit": 100,
+                "limit": OPENAQ_HOURLY_LIMIT,
+                "sort": "desc",
             },
             headers,
             f"sensor {sensor['id']} measurements request",
+            pacer,
         )
         if m_res is None:
             continue
@@ -206,7 +252,7 @@ async def fetch_city_mean_ugm3(
             continue
         for m in m_res.json().get("results", []):
             value = m.get("value")
-            unit = m.get("parameter", {}).get("units")
+            unit = m.get("parameter", {}).get("units") or sensor.get("parameter", {}).get("units")
             normalized = _normalize_to_ugm3(value, unit)
             if normalized is not None and normalized >= 0:
                 raw_values.append(normalized)
@@ -256,27 +302,35 @@ async def run_etl() -> list[dict]:
     print("\n🚀 Starting ETL for all pollutants, all cities...")
     results = []
     async with httpx.AsyncClient(timeout=60.0) as client:
+        openaq_pacer = OpenAQRequestPacer()
         for idx, city in enumerate(CITIES, 1):
             print(f"\n📍 [{idx}/{len(CITIES)}] {city['name']}...")
             population = await fetch_population(client, city["bbox"])
             print(f"  👥 Population: {population:,}" if population else "  👥 Population: unavailable")
             api_key = os.environ.get("OPENAQ_API_KEY")
             city_sensors = await discover_city_sensors(
-                client, city["bbox"], {"X-API-Key": api_key}
+                client, city["bbox"], {"X-API-Key": api_key}, openaq_pacer
             ) if api_key else {}
 
             for parameter in POLLUTANTS:
                 mean_ugm3, n_stations = await fetch_city_mean_ugm3(
-                    client, city["bbox"], parameter, city_sensors
+                    client, city["bbox"], parameter, city_sensors, openaq_pacer
                 )
+                is_mock = mean_ugm3 is None
+                if is_mock:
+                    mean_ugm3 = generate_mock_concentration(city["id"], parameter)
                 score = compute_exposure_score(city["id"], parameter, mean_ugm3, population)
+                if is_mock:
+                    score["dataQuality"] = "mock"
+                    n_stations = 0
                 score["cityName"] = city["name"]
                 score["country"] = city["country"]
                 score["stationsSampled"] = n_stations
                 results.append(score)
 
                 if score["score"] is not None:
-                    print(f"    {parameter}: score {score['score']} ({score['category']})")
+                    source = "MOCK — OpenAQ unavailable" if is_mock else "OpenAQ"
+                    print(f"    {parameter}: score {score['score']} ({score['category']}) [{source}]")
                 elif score["dataQuality"] == "suspect":
                     print(f"    {parameter}: ⚠️ suspect reading (ratio {score['ratioToGuideline']}x) — excluded from score")
                 else:
