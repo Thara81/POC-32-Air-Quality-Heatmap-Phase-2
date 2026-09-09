@@ -280,59 +280,102 @@ async def fetch_population(client: httpx.AsyncClient, bbox) -> Optional[int]:
         },
     }
 
+    params = {
+        "dataset": "wpgppop",
+        "year": 2020,
+        "geojson": json.dumps(geojson),
+        "runasync": "true",
+    }
+
     try:
-        submit = await client.get(
-            f"{WORLDPOP_BASE}/services/stats",
-            params={
-                "dataset": "wpgppop",
-                "year": 2020,
-                "geojson": json.dumps(geojson),
-                "runasync": "true",
-            },
+        # Use a shorter timeout specifically for WorldPop.
+        timeout = httpx.Timeout(15.0, connect=5.0)
+
+        async with httpx.AsyncClient(timeout=timeout) as wp_client:
+            for attempt in range(2):
+                try:
+                    submit = await wp_client.get(
+                        f"{WORLDPOP_BASE}/services/stats",
+                        params=params,
+                    )
+
+                    print(
+                        f"  WorldPop submit attempt {attempt + 1}: "
+                        f"{submit.status_code} {submit.text[:500]}"
+                    )
+
+                    submit.raise_for_status()
+
+                    task_id = submit.json().get("taskid")
+
+                    if not task_id:
+                        print("  ⚠️ WorldPop response did not contain taskid")
+                        return None
+
+                    print(f"  WorldPop task: {task_id}")
+
+                    for poll_attempt in range(10):
+                        await asyncio.sleep(2)
+
+                        poll = await wp_client.get(
+                            f"{WORLDPOP_BASE}/tasks/{task_id}"
+                        )
+
+                        print(
+                            f"  WorldPop poll {poll_attempt + 1}: "
+                            f"{poll.status_code} {poll.text[:300]}"
+                        )
+
+                        poll.raise_for_status()
+                        data = poll.json()
+
+                        if data.get("status") == "finished":
+                            population = (
+                                data.get("data", {})
+                                .get("total_population")
+                            )
+
+                            if population is not None:
+                                print(
+                                    f"  WorldPop population: {population}"
+                                )
+                                return int(population)
+
+                            print(
+                                "  ⚠️ WorldPop finished but population "
+                                "was missing"
+                            )
+                            return None
+
+                        if data.get("status") == "failed":
+                            print(
+                                f"  ⚠️ WorldPop task failed: {data}"
+                            )
+                            return None
+
+                    print(
+                        "  ⚠️ WorldPop task did not finish "
+                        "within polling window"
+                    )
+                    return None
+
+                except (httpx.TimeoutException, httpx.ReadError) as exc:
+                    print(
+                        f"  ⚠️ WorldPop network error "
+                        f"(attempt {attempt + 1}/2): "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+                    if attempt == 0:
+                        await asyncio.sleep(2)
+                    else:
+                        return None
+
+    except Exception as exc:
+        print(
+            f"  ⚠️ WorldPop error: "
+            f"{type(exc).__name__}: {exc}"
         )
-        print(f"  WorldPop submit: {submit.status_code} {submit.text[:500]}")
-        print(f"  WorldPop submit status: {submit.status_code}")
-        print(f"  WorldPop submit response: {submit.text[:1000]}")
-
-        submit.raise_for_status()
-
-        task_id = submit.json().get("taskid")
-
-        if not task_id:
-            print("  ⚠️ WorldPop response did not contain taskid")
-            return None
-
-        print(f"  WorldPop task: {task_id}")
-
-        for attempt in range(10):
-            await asyncio.sleep(2)
-
-            poll = await client.get(
-                f"{WORLDPOP_BASE}/tasks/{task_id}"
-            )
-
-            print(
-                f"  WorldPop poll {attempt + 1}: "
-                f"{poll.status_code} {poll.text[:500]}"
-            )
-
-            poll.raise_for_status()
-            data = poll.json()
-
-            if data.get("status") == "finished":
-                population = data.get("data", {}).get("total_population")
-                print(f"  WorldPop population: {population}")
-                return population
-
-            if data.get("status") == "failed":
-                print(f"  ⚠️ WorldPop task failed: {data}")
-                return None
-
-        print("  ⚠️ WorldPop task did not finish within polling window")
-        return None
-
-    except Exception as e:
-        print(f"  ⚠️ WorldPop error: {type(e).__name__}: {e}")
         return None
 
 
