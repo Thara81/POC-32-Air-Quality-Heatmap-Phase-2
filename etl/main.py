@@ -60,6 +60,20 @@ CITIES = [
     {"id": "beijing", "name": "Beijing", "country": "CN", "bbox": [116.0, 39.65, 116.8, 40.2]},
 ]
 
+# Demo/PoC city totals used only when WorldPop cannot provide a valid result.
+# These values are not live WorldPop measurements and must remain labelled as
+# fallback data in the generated snapshot.
+FALLBACK_POPULATIONS = {
+    "delhi": 19_000_000,
+    "los-angeles": 13_000_000,
+    "london": 9_000_000,
+    "jakarta": 11_000_000,
+    "lagos": 15_000_000,
+    "warsaw": 1_800_000,
+    "sao-paulo": 12_000_000,
+    "beijing": 21_500_000,
+}
+
 POLLUTANTS = list(WHO_GUIDELINE_UGM3.keys())
 
 # Known unit strings OpenAQ reports, normalized to a µg/m³ multiplier.
@@ -386,8 +400,16 @@ async def run_etl() -> list[dict]:
         openaq_pacer = OpenAQRequestPacer()
         for idx, city in enumerate(CITIES, 1):
             print(f"\n📍 [{idx}/{len(CITIES)}] {city['name']}...")
-            population = await fetch_population(client, city["bbox"])
-            print(f"  👥 Population: {population:,}" if population else "  👥 Population: unavailable")
+            worldpop_population = await fetch_population(client, city["bbox"])
+            has_valid_worldpop = isinstance(worldpop_population, (int, float)) and worldpop_population > 0
+            if has_valid_worldpop:
+                population = int(worldpop_population)
+                population_source = "WorldPop"
+                print(f"  👥 Population: {population:,} (WorldPop)")
+            else:
+                population = FALLBACK_POPULATIONS[city["id"]]
+                population_source = "fallback"
+                print(f"  ⚠️ WorldPop unavailable — using fallback population: {population:,}")
             api_key = os.environ.get("OPENAQ_API_KEY")
             city_sensors = await discover_city_sensors(
                 client, city["bbox"], {"X-API-Key": api_key}, openaq_pacer
@@ -406,6 +428,7 @@ async def run_etl() -> list[dict]:
                     n_stations = 0
                 score["cityName"] = city["name"]
                 score["country"] = city["country"]
+                score["populationSource"] = population_source
                 score["stationsSampled"] = n_stations
                 results.append(score)
 
