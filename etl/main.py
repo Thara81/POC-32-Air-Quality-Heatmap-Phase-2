@@ -271,31 +271,69 @@ async def fetch_population(client: httpx.AsyncClient, bbox) -> Optional[int]:
         "geometry": {
             "type": "Polygon",
             "coordinates": [[
-                [bbox[0], bbox[1]], [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]],
+                [bbox[0], bbox[1]],
+                [bbox[2], bbox[1]],
+                [bbox[2], bbox[3]],
+                [bbox[0], bbox[3]],
+                [bbox[0], bbox[1]],
             ]],
         },
     }
+
     try:
         submit = await client.get(
             f"{WORLDPOP_BASE}/services/stats",
-            params={"dataset": "wpgppop", "year": 2020, "geojson": json.dumps(geojson), "runasync": "true"},
+            params={
+                "dataset": "wpgppop",
+                "year": 2020,
+                "geojson": json.dumps(geojson),
+                "runasync": "true",
+            },
         )
+        print(f"  WorldPop submit: {submit.status_code} {submit.text[:500]}")
+        print(f"  WorldPop submit status: {submit.status_code}")
+        print(f"  WorldPop submit response: {submit.text[:1000]}")
+
+        submit.raise_for_status()
+
         task_id = submit.json().get("taskid")
+
         if not task_id:
+            print("  ⚠️ WorldPop response did not contain taskid")
             return None
-        for _ in range(6):
-            await asyncio.sleep(1.5)
-            poll = await client.get(f"{WORLDPOP_BASE}/tasks/{task_id}")
+
+        print(f"  WorldPop task: {task_id}")
+
+        for attempt in range(10):
+            await asyncio.sleep(2)
+
+            poll = await client.get(
+                f"{WORLDPOP_BASE}/tasks/{task_id}"
+            )
+
+            print(
+                f"  WorldPop poll {attempt + 1}: "
+                f"{poll.status_code} {poll.text[:500]}"
+            )
+
+            poll.raise_for_status()
             data = poll.json()
+
             if data.get("status") == "finished":
-                return data.get("data", {}).get("total_population")
+                population = data.get("data", {}).get("total_population")
+                print(f"  WorldPop population: {population}")
+                return population
+
             if data.get("status") == "failed":
+                print(f"  ⚠️ WorldPop task failed: {data}")
                 return None
-    except Exception as e:
-        print(f"  ⚠️ WorldPop error: {e}")
+
+        print("  ⚠️ WorldPop task did not finish within polling window")
         return None
-    return None
+
+    except Exception as e:
+        print(f"  ⚠️ WorldPop error: {type(e).__name__}: {e}")
+        return None
 
 
 async def run_etl() -> list[dict]:
