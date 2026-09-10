@@ -80,25 +80,39 @@ export default function Page() {
     let cancelled = false;
     setExposureLoading(true);
 
-    fetch(`/api/exposure/snapshot`)
-      .then((r) => r.json())
-      .then((data: ExposureScoreResult[] | ApiError) => {
+    const loadExposure = async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         if (cancelled) return;
-        if (isError(data)) {
-          setExposure(null);
+
+        try {
+          const response = await fetch(`/api/exposure/snapshot`);
+          if (!response.ok) throw new Error(`Snapshot request failed: ${response.status}`);
+
+          const data = (await response.json()) as ExposureScoreResult[] | ApiError;
+          if (cancelled) return;
+          if (isError(data)) {
+            setExposure(null);
+            return;
+          }
+
+          const cityData = data.find(
+            (d) => d.cityId === cityId && d.parameter === parameter
+          );
+          setExposure(cityData || null);
           return;
+        } catch {
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         }
-        const cityData = data.find(
-          (d) => d.cityId === cityId && d.parameter === parameter
-        );
-        setExposure(cityData || null);
-      })
-      .catch(() => {
-        if (!cancelled) setExposure(null);
-      })
-      .finally(() => {
-        if (!cancelled) setExposureLoading(false);
-      });
+      }
+
+      if (!cancelled) setExposure(null);
+    };
+
+    loadExposure().finally(() => {
+      if (!cancelled) setExposureLoading(false);
+    });
 
     return () => { cancelled = true; };
   }, [cityId, parameter]);
