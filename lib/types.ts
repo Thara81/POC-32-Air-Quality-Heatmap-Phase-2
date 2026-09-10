@@ -77,7 +77,7 @@ export type ExposureCategory = "Low" | "Moderate" | "High" | "Severe";
 // SUSPECT_RATIO_THRESHOLD in exposure.ts) that we don't trust it enough to
 // derive a score/category from it. The raw meanConcentration/ratio are
 // still reported for transparency/debugging.
-export type DataQuality = "live" | "partial" | "unavailable" | "suspect";
+export type DataQuality = "live" | "partial" | "unavailable" | "suspect" | "mock";
 
 export interface ExposureScoreResult {
   cityId: string;

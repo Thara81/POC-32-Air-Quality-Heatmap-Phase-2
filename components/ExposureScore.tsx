@@ -75,7 +75,7 @@ export default function ExposureScore({ result, loading }: { result: ExposureSco
           </div>
 
           <p className="mt-1 font-mono text-[7px] uppercase tracking-wider text-text-faint">
-            Quality: {result.dataQuality} · {result.stationsSampled || 0} stations
+            {result.dataQuality === "mock" ? "Quality: Mock demo data" : `Quality: ${result.dataQuality}`}
           </p>
         </>
       )}
