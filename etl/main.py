@@ -41,6 +41,7 @@ from typing import Optional
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from exposure_calc import compute_exposure_score, WHO_GUIDELINE_UGM3
 
@@ -463,6 +464,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+SNAPSHOT_GENERATION_LOCK = asyncio.Lock()
+
+
+def _read_valid_snapshot() -> Optional[list[dict]]:
+    if not SNAPSHOT_PATH.exists():
+        return None
+    try:
+        snapshot = json.loads(SNAPSHOT_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(snapshot, list) or len(snapshot) != len(CITIES) * len(POLLUTANTS):
+        return None
+    if not all(isinstance(entry, dict) for entry in snapshot):
+        return None
+    return snapshot
 
 
 @app.post("/run")
@@ -474,9 +490,27 @@ async def run_endpoint():
 
 @app.get("/snapshot")
 async def snapshot_endpoint():
-    if not SNAPSHOT_PATH.exists():
-        return {"error": "No snapshot yet. POST /run first."}
-    return json.loads(SNAPSHOT_PATH.read_text())
+    snapshot = _read_valid_snapshot()
+    if snapshot is not None:
+        return snapshot
+
+    async with SNAPSHOT_GENERATION_LOCK:
+        snapshot = _read_valid_snapshot()
+        if snapshot is not None:
+            return snapshot
+        try:
+            results = await run_etl()
+            write_snapshot(results)
+            snapshot = _read_valid_snapshot()
+            if snapshot is None:
+                raise RuntimeError("generated snapshot failed validation")
+            return snapshot
+        except Exception as exc:
+            print(f"  ⚠️ Automatic snapshot generation failed: {type(exc).__name__}: {exc}")
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Snapshot unavailable and automatic ETL generation failed"},
+            )
 
 
 if __name__ == "__main__":
